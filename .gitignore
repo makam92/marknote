@@ -1,0 +1,7 @@
+node_modules/
+notes/
+attachments/
+.trash/
+models/
+.DS_Store
+icon/*.iconset/

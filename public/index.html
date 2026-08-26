@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marknote</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128213;</text></svg>">
+<script>try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <header class="brand">
+    <h1>Marknote</h1>
+    <div class="brand-actions">
+      <button id="themeToggle" class="btn-ghost" title="Switch light/dark theme">☾</button>
+      <button id="recBtn" class="btn-ghost" title="Record a meeting">🎙</button>
+      <button id="newNote" class="btn-accent" title="Create a new note">+ New</button>
+    </div>
+  </header>
+
+  <button id="recBar" class="rec-bar" hidden title="Recording in progress — open the meeting page">
+    <span class="rec-dot"></span>
+    <span id="recTime">0:00</span>
+    <span id="recBarState" class="rec-label">Recording…</span>
+  </button>
+
+  <div id="newNoteForm" class="new-note-form" hidden>
+    <input id="newNoteTitle" type="text" placeholder="Note title, then Enter…" autocomplete="off">
+  </div>
+
+  <div class="search-wrap">
+    <input id="search" type="search" placeholder="Search notes…  ( / )" autocomplete="off">
+  </div>
+
+  <div class="list-controls">
+    <span id="noteCount" class="note-count"></span>
+    <div class="sort-toggle" role="group" aria-label="Sort order">
+      <button id="sortModified" class="active" title="Sort by last modified">Recent</button>
+      <button id="sortTitle" title="Sort alphabetically">A–Z</button>
+    </div>
+  </div>
+
+  <div class="labels-section">
+    <button id="labelsHead" class="labels-head" title="Show/hide labels">
+      <span>Labels</span>
+      <span id="labelsChevron" class="chevron">▾</span>
+    </button>
+    <nav id="labelList" class="label-list" aria-label="Labels"></nav>
+  </div>
+
+  <nav id="noteList" class="note-list" aria-label="Notes"></nav>
+
+  <button id="trashBtn" class="trash-btn" title="Deleted notes">Trash <span id="trashCount"></span></button>
+</aside>
+
+<main class="main">
+  <div id="empty" class="empty-state">
+    <div class="empty-mark">❦</div>
+    <p>Select a note to read,<br>or press <kbd>/</kbd> to search.</p>
+  </div>
+
+  <article id="noteView" hidden>
+    <header class="note-header">
+      <div class="note-meta">
+        <span id="noteDate"></span>
+        <span id="noteTags" class="meta-tags"></span>
+      </div>
+      <div class="note-actions">
+        <span id="saveState" class="save-state" aria-live="polite"></span>
+        <button id="pinBtn" title="Keep this note at the top of the list">Pin</button>
+        <button id="renameBtn" title="Rename note (updates links from other notes)">Rename</button>
+        <button id="editBtn" title="Edit (⌘E)">Edit</button>
+        <button id="deleteBtn" class="danger" title="Move note to trash">Delete</button>
+      </div>
+    </header>
+    <div id="renameWrap" class="rename-wrap" hidden>
+      <input id="renameInput" type="text" autocomplete="off" spellcheck="false">
+      <span class="rename-hint">Enter to rename · Esc to cancel</span>
+    </div>
+    <div id="rendered" class="rendered"></div>
+    <div id="editorWrap" class="editor-wrap" hidden>
+      <div id="editorToolbar" class="editor-toolbar" role="toolbar" aria-label="Formatting">
+        <span class="tb-group">
+          <button data-md="bold" title="Bold (⌘B)"><strong>B</strong></button>
+          <button data-md="italic" title="Italic (⌘I)"><em>I</em></button>
+          <button data-md="strike" title="Strikethrough"><s>S</s></button>
+        </span>
+        <span class="tb-group">
+          <button data-md="h1" title="Heading 1">H1</button>
+          <button data-md="h2" title="Heading 2">H2</button>
+          <button data-md="h3" title="Heading 3">H3</button>
+        </span>
+        <span class="tb-group">
+          <button data-md="ul" title="Bullet list">•&hairsp;–</button>
+          <button data-md="ol" title="Numbered list">1.</button>
+          <button data-md="task" title="Task list">☑</button>
+          <button data-md="quote" title="Quote">❝</button>
+          <button data-md="hr" title="Divider">—</button>
+        </span>
+        <span class="tb-group">
+          <button data-md="code" title="Inline code"><code>`x`</code></button>
+          <button data-md="codeblock" title="Code block"><code>```</code></button>
+          <button data-md="mermaid" title="Mermaid diagram">Mermaid</button>
+        </span>
+        <span class="tb-group">
+          <button data-md="link" title="Link (⌘K)">Link</button>
+          <button data-md="notelink" title="Link to another note — type [[ anywhere to search">[[&hairsp;Note&hairsp;]]</button>
+          <button data-md="table" title="Table">Table</button>
+          <button data-md="image" title="Image (attachment)">Img</button>
+          <button id="emojiBtn" title="Insert emoji">😊</button>
+        </span>
+        <div id="emojiPanel" class="emoji-panel" hidden>
+          <input id="emojiSearch" type="text" placeholder="Search emoji…" autocomplete="off" spellcheck="false">
+          <div id="emojiGrid" class="emoji-grid"></div>
+        </div>
+      </div>
+      <textarea id="editor" spellcheck="false" aria-label="Note source"></textarea>
+      <div class="editor-hints">⌘S save &nbsp;·&nbsp; ⌘E preview &nbsp;·&nbsp; ⌘B / ⌘I / ⌘K format &nbsp;·&nbsp; <code>[[</code> links a note &nbsp;·&nbsp; front&#8209;matter block at the top holds title &amp; tags</div>
+    </div>
+    <footer id="backlinks" class="backlinks" hidden></footer>
+  </article>
+
+  <section id="trashView" class="trash-view" hidden>
+    <header class="trash-head">
+      <h2>Trash</h2>
+      <button id="trashClose" title="Back to notes">Close</button>
+    </header>
+    <p class="trash-note">Deleted notes are kept here on disk — restore them or remove them for good.</p>
+    <div id="trashList"></div>
+  </section>
+
+  <section id="meetingView" class="meeting-view" hidden>
+    <header class="meeting-head">
+      <h2>Meeting</h2>
+      <span id="meetingStatus" class="meeting-status">Recording</span>
+    </header>
+    <div id="meetingTimer" class="meeting-timer">0:00</div>
+    <canvas id="meetingWave" width="800" height="90"></canvas>
+    <div class="meeting-controls">
+      <button id="meetPause">Pause</button>
+      <button id="meetStop" class="btn-accent">Stop &amp; save</button>
+      <button id="meetDiscard" class="danger">Discard</button>
+    </div>
+    <input id="meetingTitle" class="meeting-title" type="text" autocomplete="off" spellcheck="false">
+    <textarea id="meetingNotes" class="meeting-notes" placeholder="Notes during the meeting… (saved into the note as ## Notes)" spellcheck="false"></textarea>
+  </section>
+
+  <div id="findBar" class="find-bar" hidden>
+    <input id="findInput" type="text" placeholder="Find in note…" autocomplete="off" spellcheck="false">
+    <span id="findCount"></span>
+    <button id="findPrev" title="Previous (Shift+Enter)">↑</button>
+    <button id="findNext" title="Next (Enter)">↓</button>
+    <button id="findClose" title="Close (Esc)">×</button>
+  </div>
+</main>
+
+<div id="noteSuggest" class="note-suggest" hidden></div>
+
+<div id="recRemind" class="rec-remind" hidden>
+  <span class="rec-dot"></span>
+  <span id="recRemindText"></span>
+  <button id="recRemindKeep">Keep recording</button>
+  <button id="recRemindStop" class="btn-accent">Stop &amp; save</button>
+</div>
+
+<div id="quickOpen" class="quick-open" hidden>
+  <div class="quick-box">
+    <input id="quickInput" type="text" placeholder="Jump to note…" autocomplete="off" spellcheck="false">
+    <div id="quickList"></div>
+  </div>
+</div>
+
+<div id="mmModal" class="mm-modal" hidden>
+  <div class="mm-box">
+    <header class="mm-head">
+      <strong>Mermaid diagram</strong>
+      <select id="mmTemplate" title="Insert a starter template">
+        <option value="">Template…</option>
+        <option value="flowchart">Flowchart</option>
+        <option value="image">Flowchart with image</option>
+        <option value="sequence">Sequence</option>
+        <option value="class">Class</option>
+        <option value="state">State</option>
+        <option value="er">Entity–relationship</option>
+        <option value="gantt">Gantt</option>
+        <option value="pie">Pie</option>
+        <option value="mindmap">Mind map</option>
+        <option value="timeline">Timeline</option>
+        <option value="git">Git graph</option>
+      </select>
+      <span class="mm-hint">⌘⏎ save &nbsp;·&nbsp; Esc cancel</span>
+      <span class="mm-spacer"></span>
+      <button id="mmSave" class="btn-accent">Insert</button>
+      <button id="mmCancel">Cancel</button>
+    </header>
+    <div class="mm-body">
+      <div class="mm-left">
+        <textarea id="mmCode" spellcheck="false" aria-label="Diagram source"></textarea>
+        <div class="mm-cheat">
+          <div class="mm-cheat-title" id="mmCheatTitle">Syntax</div>
+          <div id="mmCheatBody"></div>
+        </div>
+      </div>
+      <div class="mm-right">
+        <div id="mmPreview" class="mm-preview"></div>
+        <div id="mmError" class="mm-error" hidden></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/mermaid.min.js"></script>
+<script src="/vendor/fix-webm-duration.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

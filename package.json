@@ -1,0 +1,23 @@
+{
+  "name": "notes",
+  "productName": "Notes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop app for viewing, editing and searching markdown notes (migrated from Notable)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node server.js"
+  },
+  "dependencies": {
+    "fix-webm-duration": "^1.0.6",
+    "marked": "^16.1.1",
+    "mermaid": "^11.17.0"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0"
+  },
+  "allowScripts": {
+    "electron@38.8.6": true
+  }
+}

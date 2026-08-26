@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fdfcfa"/>
+      <stop offset="1" stop-color="#f1ede4"/>
+    </linearGradient>
+  </defs>
+  <!-- Big Sur style: 824x824 rounded rect centered on a 1024 canvas -->
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#paper)"/>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="none" stroke="#ddd4c2" stroke-width="6"/>
+  <text x="472" y="512" text-anchor="middle" dominant-baseline="central"
+        font-family="Avenir Next, Helvetica Neue, Helvetica, sans-serif" font-weight="700"
+        font-size="560" fill="#221e17">N</text>
+  <circle cx="756" cy="700" r="62" fill="#b4551e"/>
+</svg>
