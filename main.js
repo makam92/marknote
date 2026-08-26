@@ -3,6 +3,9 @@ const { start, PORT } = require('./server');
 
 app.setName('Marknote');
 
+// Presentations can autoplay background music without a per-video gesture.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1320,

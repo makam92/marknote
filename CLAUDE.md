@@ -1,0 +1,3 @@
+# Marknote
+
+@AGENTS.md

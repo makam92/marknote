@@ -12,7 +12,8 @@
   "dependencies": {
     "fix-webm-duration": "^1.0.6",
     "marked": "^16.1.1",
-    "mermaid": "^11.17.0"
+    "mermaid": "^11.17.0",
+    "reveal.js": "^6.0.1"
   },
   "devDependencies": {
     "electron": "^38.0.0"

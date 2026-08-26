@@ -268,9 +268,43 @@ function embedVideos(el) {
   });
 }
 
-function renderMarkdown(el, body) {
+// ![[Note Title]] splices another note's body in place (max 3 levels deep).
+function expandTransclusions(text, depth = 0, seen = new Set()) {
+  if (depth > 2) return text;
+  return text.replace(/!\[\[([^\]\n]+)\]\]/g, (m, name) => {
+    const target = resolveNote(name.trim());
+    if (!target || seen.has(target.file)) return m;
+    const nextSeen = new Set(seen);
+    nextSeen.add(target.file);
+    return expandTransclusions(target.body, depth + 1, nextSeen);
+  });
+}
+
+// Deterministic mermaid for slides/previews: mermaid.render doesn't care
+// whether the container is hidden, unlike mermaid.run which measures 0×0
+// inside reveal's non-active slides.
+let staticMmSeq = 0;
+async function renderMermaidStatic(el) {
+  for (const node of [...el.querySelectorAll('.mermaid')]) {
+    const code = node.textContent;
+    const fresh = document.createElement('div');
+    fresh.className = 'mermaid';
+    node.replaceWith(fresh);
+    try {
+      const { svg } = await mermaid.render(
+        'staticmm' + ++staticMmSeq,
+        code.replaceAll('"@attachment/', '"/attachments/')
+      );
+      fresh.innerHTML = svg;
+    } catch (e) {
+      fresh.innerHTML = '<div class="thumb-diagram">◇ diagram error</div>';
+    }
+  }
+}
+
+function renderMarkdown(el, body, opts = {}) {
   // breaks: true — a single newline renders as a line break, like Notable did.
-  el.innerHTML = marked.parse(preprocess(body), { gfm: true, breaks: true });
+  el.innerHTML = marked.parse(preprocess(expandTransclusions(body)), { gfm: true, breaks: true });
   linkifyWikiLinks(el);
   embedVideos(el);
   el.querySelectorAll('pre > code.language-mermaid').forEach((code, i) => {
@@ -287,8 +321,10 @@ function renderMarkdown(el, body) {
     wrap.append(div, edit);
     code.closest('pre').replaceWith(wrap);
   });
+  // Static contexts (slides, deck preview) render diagrams themselves via
+  // renderMermaidStatic — mermaid.run would race them for the source text.
   const diagrams = el.querySelectorAll('.mermaid');
-  if (diagrams.length) mermaid.run({ nodes: diagrams }).catch(() => {});
+  if (diagrams.length && !opts.staticMermaid) mermaid.run({ nodes: diagrams }).catch(() => {});
   el.querySelectorAll('input[type="checkbox"]').forEach((box, i) => {
     box.removeAttribute('disabled');
     box.dataset.taskIndex = i;
@@ -646,6 +682,7 @@ function showNote(note) {
   $('editorWrap').hidden = true;
   $('rendered').hidden = false;
   $('pinBtn').textContent = note.pinned ? 'Unpin' : 'Pin';
+  $('deckBtn').hidden = !isDeckNote(note);
   closeFind();
   renderBacklinks(note);
   $('editBtn').textContent = 'Edit';
@@ -829,22 +866,46 @@ function edReplace(from, to, text) {
   else document.execCommand('delete');
 }
 
+// The textarea the formatting toolbar currently targets — the main editor,
+// or the deck editor's slide pane while that modal is open.
+let tbBox = null;
+const tbb = () => tbBox || ed;
+
+function tbReplace(from, to, text) {
+  const box = tbb();
+  box.focus();
+  box.setSelectionRange(from, to);
+  if (text) document.execCommand('insertText', false, text);
+  else document.execCommand('delete');
+}
+
+function tbDirty() {
+  if (tbb() === ed) {
+    setDirty(true);
+  } else {
+    deckEd.dirty = true;
+    scheduleDeckPreview();
+  }
+}
+
 // Wrap the selection (or a placeholder) in inline markers, e.g. **bold**.
 function wrapSel(before, after, placeholder) {
-  const s = ed.selectionStart;
-  const e = ed.selectionEnd;
-  const sel = ed.value.slice(s, e) || placeholder;
-  edReplace(s, e, before + sel + after);
-  ed.setSelectionRange(s + before.length, s + before.length + sel.length);
-  setDirty(true);
+  const box = tbb();
+  const s = box.selectionStart;
+  const e = box.selectionEnd;
+  const sel = box.value.slice(s, e) || placeholder;
+  tbReplace(s, e, before + sel + after);
+  box.setSelectionRange(s + before.length, s + before.length + sel.length);
+  tbDirty();
 }
 
 // Prefix every selected line (heading, list, quote). Applying the same prefix
 // again removes it; applying a different one replaces the existing marker.
 function prefixLines(prefix, opts = {}) {
-  const value = ed.value;
-  const lineStart = value.lastIndexOf('\n', ed.selectionStart - 1) + 1;
-  let lineEnd = value.indexOf('\n', ed.selectionEnd);
+  const box = tbb();
+  const value = box.value;
+  const lineStart = value.lastIndexOf('\n', box.selectionStart - 1) + 1;
+  let lineEnd = value.indexOf('\n', box.selectionEnd);
   if (lineEnd === -1) lineEnd = value.length;
   const lines = value.slice(lineStart, lineEnd).split('\n');
   const re = opts.number
@@ -858,21 +919,22 @@ function prefixLines(prefix, opts = {}) {
       return (opts.number ? `${i + 1}. ` : prefix) + l.replace(marker, '');
     })
     .join('\n');
-  edReplace(lineStart, lineEnd, next);
-  ed.setSelectionRange(lineStart, lineStart + next.length);
-  setDirty(true);
+  tbReplace(lineStart, lineEnd, next);
+  box.setSelectionRange(lineStart, lineStart + next.length);
+  tbDirty();
 }
 
 // Insert a block template at the cursor with a blank line before it,
 // selecting [selFrom, selTo) within the block so typing replaces the placeholder.
 function insertBlock(block, selFrom, selTo) {
-  const s = ed.selectionStart;
-  const before = ed.value.slice(0, s);
+  const box = tbb();
+  const s = box.selectionStart;
+  const before = box.value.slice(0, s);
   const pad = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-  edReplace(s, ed.selectionEnd, pad + block);
+  tbReplace(s, box.selectionEnd, pad + block);
   const base = s + pad.length;
-  ed.setSelectionRange(base + selFrom, base + (selTo ?? selFrom));
-  setDirty(true);
+  box.setSelectionRange(base + selFrom, base + (selTo ?? selFrom));
+  tbDirty();
 }
 
 const toolbarActions = {
@@ -889,63 +951,66 @@ const toolbarActions = {
   hr: () => insertBlock('---\n\n', 5),
   code: () => wrapSel('`', '`', 'code'),
   codeblock: () => {
-    const s = ed.selectionStart;
-    const sel = ed.value.slice(s, ed.selectionEnd);
+    const box = tbb();
+    const s = box.selectionStart;
+    const sel = box.value.slice(s, box.selectionEnd);
     if (sel) {
-      const before = ed.value.slice(0, s);
+      const before = box.value.slice(0, s);
       const pad = !before || before.endsWith('\n') ? '' : '\n';
-      edReplace(s, ed.selectionEnd, pad + '```\n' + sel.replace(/\n$/, '') + '\n```\n');
+      tbReplace(s, box.selectionEnd, pad + '```\n' + sel.replace(/\n$/, '') + '\n```\n');
       const langPos = s + pad.length + 3; // right after ``` so a language can be typed
-      ed.setSelectionRange(langPos, langPos);
-      setDirty(true);
+      box.setSelectionRange(langPos, langPos);
+      tbDirty();
     } else {
       insertBlock('```\ncode here\n```\n', 4, 13);
     }
   },
   mermaid: () => {
-    const fence = fenceAtCursor();
+    const fence = fenceAtCursor(tbb());
     if (fence) {
       openMermaid(fence.code, 'Save', (code) => {
-        edReplace(fence.start, fence.end, code);
-        setDirty(true);
+        tbReplace(fence.start, fence.end, code);
+        tbDirty();
       });
     } else {
       openMermaid(MERMAID_TEMPLATES.flowchart, 'Insert', (code) => {
         insertBlock('```mermaid\n' + code + '\n```\n', 11 + code.length + 5);
-        setDirty(true);
+        tbDirty();
       });
     }
   },
   notelink: () => {
-    const s = ed.selectionStart;
-    const sel = ed.value.slice(s, ed.selectionEnd);
-    ed.setRangeText('[[' + sel + ']]', s, ed.selectionEnd);
-    ed.setSelectionRange(s + 2 + sel.length, s + 2 + sel.length);
-    ed.focus();
-    setDirty(true);
-    updateSuggest();
+    const box = tbb();
+    const s = box.selectionStart;
+    const sel = box.value.slice(s, box.selectionEnd);
+    tbReplace(s, box.selectionEnd, '[[' + sel + ']]');
+    box.setSelectionRange(s + 2 + sel.length, s + 2 + sel.length);
+    tbDirty();
+    updateSuggest(box);
   },
   link: () => {
-    const s = ed.selectionStart;
-    const sel = ed.value.slice(s, ed.selectionEnd);
+    const box = tbb();
+    const s = box.selectionStart;
+    const sel = box.value.slice(s, box.selectionEnd);
     const label = sel || 'text';
-    edReplace(s, ed.selectionEnd, '[' + label + '](url)');
+    tbReplace(s, box.selectionEnd, '[' + label + '](url)');
     const urlStart = s + label.length + 3;
-    if (sel) ed.setSelectionRange(urlStart, urlStart + 3);
-    else ed.setSelectionRange(s + 1, s + 1 + label.length);
-    setDirty(true);
+    if (sel) box.setSelectionRange(urlStart, urlStart + 3);
+    else box.setSelectionRange(s + 1, s + 1 + label.length);
+    tbDirty();
   },
   table: () => {
     const t = '| Column 1 | Column 2 |\n| -------- | -------- |\n|          |          |\n';
     insertBlock(t, 2, 10);
   },
   image: () => {
-    const s = ed.selectionStart;
-    const alt = ed.value.slice(s, ed.selectionEnd) || 'alt';
-    edReplace(s, ed.selectionEnd, '![' + alt + '](@attachment/file.png)');
+    const box = tbb();
+    const s = box.selectionStart;
+    const alt = box.value.slice(s, box.selectionEnd) || 'alt';
+    tbReplace(s, box.selectionEnd, '![' + alt + '](@attachment/file.png)');
     const nameStart = s + alt.length + 4 + '@attachment/'.length;
-    ed.setSelectionRange(nameStart, nameStart + 'file.png'.length);
-    setDirty(true);
+    box.setSelectionRange(nameStart, nameStart + 'file.png'.length);
+    tbDirty();
   }
 };
 
@@ -954,8 +1019,12 @@ const toolbarActions = {
 let suggest = { open: false, items: [], index: 0, start: 0 };
 
 // Caret position in viewport coordinates, via an offscreen mirror of the textarea.
-function caretViewportPos() {
-  const style = getComputedStyle(ed);
+// The textarea the note-suggest dropdown is currently attached to
+// (the main editor or the deck editor's slide pane).
+let suggestBox = null;
+
+function caretViewportPos(box) {
+  const style = getComputedStyle(box);
   const mirror = document.createElement('div');
   for (const prop of [
     'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
@@ -966,8 +1035,8 @@ function caretViewportPos() {
   mirror.style.visibility = 'hidden';
   mirror.style.whiteSpace = 'pre-wrap';
   mirror.style.wordWrap = 'break-word';
-  mirror.style.width = ed.clientWidth + 'px';
-  mirror.textContent = ed.value.slice(0, ed.selectionStart);
+  mirror.style.width = box.clientWidth + 'px';
+  mirror.textContent = box.value.slice(0, box.selectionStart);
   const marker = document.createElement('span');
   marker.textContent = '​';
   mirror.appendChild(marker);
@@ -975,9 +1044,9 @@ function caretViewportPos() {
   const top = marker.offsetTop;
   const left = marker.offsetLeft;
   mirror.remove();
-  const rect = ed.getBoundingClientRect();
+  const rect = box.getBoundingClientRect();
   return {
-    top: rect.top + top - ed.scrollTop + (parseFloat(style.lineHeight) || 22),
+    top: rect.top + top - box.scrollTop + (parseFloat(style.lineHeight) || 22),
     left: rect.left + left
   };
 }
@@ -997,17 +1066,18 @@ function renderSuggest() {
         </button>`
     )
     .join('');
-  const pos = caretViewportPos();
+  const pos = caretViewportPos(suggestBox);
   panel.hidden = false;
   panel.style.left = Math.max(8, Math.min(pos.left, window.innerWidth - panel.offsetWidth - 8)) + 'px';
   panel.style.top = Math.min(pos.top + 4, window.innerHeight - panel.offsetHeight - 8) + 'px';
 }
 
-function updateSuggest() {
-  if (!state.editing) return closeSuggest();
-  const caret = ed.selectionStart;
-  if (caret !== ed.selectionEnd) return closeSuggest();
-  const m = ed.value.slice(0, caret).match(/\[\[([^\][\n]*)$/);
+function updateSuggest(box = ed) {
+  const usable = box === ed ? state.editing : deckEd.open;
+  if (!usable) return closeSuggest();
+  const caret = box.selectionStart;
+  if (caret !== box.selectionEnd) return closeSuggest();
+  const m = box.value.slice(0, caret).match(/\[\[([^\][\n]*)$/);
   if (!m) return closeSuggest();
   const q = canon(m[1]);
   const items = state.notes
@@ -1020,17 +1090,26 @@ function updateSuggest() {
     )
     .slice(0, 8);
   if (!items.length) return closeSuggest();
+  suggestBox = box;
   suggest = { open: true, items, index: 0, start: caret - m[1].length };
   renderSuggest();
 }
 
 function acceptSuggest(note) {
-  const caret = ed.selectionStart;
+  const box = suggestBox || ed;
+  const caret = box.selectionStart;
   // Swallow a closing ]] that's already there (e.g. from the toolbar button).
-  const trailing = ed.value.slice(caret, caret + 2) === ']]' ? 2 : 0;
-  edReplace(suggest.start, caret + trailing, note.title + ']]');
+  const trailing = box.value.slice(caret, caret + 2) === ']]' ? 2 : 0;
+  box.focus();
+  box.setSelectionRange(suggest.start, caret + trailing);
+  document.execCommand('insertText', false, note.title + ']]');
   closeSuggest();
-  setDirty(true);
+  if (box === ed) {
+    setDirty(true);
+  } else {
+    deckEd.dirty = true;
+    scheduleDeckPreview();
+  }
 }
 
 $('noteSuggest').addEventListener('mousedown', (e) => e.preventDefault());
@@ -1039,11 +1118,34 @@ $('noteSuggest').addEventListener('click', (e) => {
   if (btn) acceptSuggest(suggest.items[Number(btn.dataset.i)]);
 });
 
-ed.addEventListener('input', updateSuggest);
-ed.addEventListener('click', updateSuggest);
+ed.addEventListener('input', () => updateSuggest(ed));
+ed.addEventListener('click', () => updateSuggest(ed));
 ed.addEventListener('blur', closeSuggest);
 ed.addEventListener('scroll', closeSuggest);
 window.addEventListener('resize', closeSuggest);
+
+// Shared keyboard navigation for the dropdown; true = the key was handled.
+function handleSuggestKeys(e) {
+  if (!suggest.open) return false;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const len = suggest.items.length;
+    suggest.index = (suggest.index + (e.key === 'ArrowDown' ? 1 : len - 1)) % len;
+    renderSuggest();
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    acceptSuggest(suggest.items[suggest.index]);
+    return true;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeSuggest();
+    return true;
+  }
+  return false;
+}
 
 /* ——— mermaid diagram editor ——— */
 
@@ -1338,9 +1440,9 @@ $('mmCode').addEventListener('keydown', (e) => {
 const MM_FENCE = /```mermaid\n([\s\S]*?)```/g;
 
 // The mermaid fence surrounding the editor cursor, if any.
-function fenceAtCursor() {
-  const pos = ed.selectionStart;
-  for (const m of ed.value.matchAll(MM_FENCE)) {
+function fenceAtCursor(box = ed) {
+  const pos = box.selectionStart;
+  for (const m of box.value.matchAll(MM_FENCE)) {
     if (pos >= m.index && pos <= m.index + m[0].length) {
       const start = m.index + '```mermaid\n'.length;
       return { start, end: start + m[1].length, code: m[1].replace(/\s+$/, '') };
@@ -1369,6 +1471,594 @@ async function editRenderedDiagram(idx) {
 $('rendered').addEventListener('click', (e) => {
   const btn = e.target.closest('.diagram-edit');
   if (btn) editRenderedDiagram(Number(btn.dataset.index));
+});
+
+/* ——— presentations ——— */
+
+let deck = null;
+let deckAudio = null;
+let musicPlaying = false;
+
+// Split the note body into slides on standalone --- lines (outside code fences).
+function splitSlides(body) {
+  const slides = [];
+  let cur = [];
+  let inFence = false;
+  for (const line of body.split('\n')) {
+    if (/^```/.test(line.trim())) inFence = !inFence;
+    if (!inFence && /^-{3,}\s*$/.test(line)) {
+      slides.push(cur.join('\n'));
+      cur = [];
+    } else {
+      cur.push(line);
+    }
+  }
+  slides.push(cur.join('\n'));
+  const nonEmpty = slides.filter((s) => s.trim());
+  return nonEmpty.length ? nonEmpty : [body];
+}
+
+function playSlideSound(slideEl) {
+  if (deckAudio) {
+    deckAudio.pause();
+    deckAudio = null;
+  }
+  const src = slideEl && slideEl.dataset.sound;
+  if (src) {
+    deckAudio = new Audio(src);
+    deckAudio.play().catch(() => {});
+  }
+}
+
+function musicCommand(func) {
+  const iframe = $('presentMusic').querySelector('iframe');
+  if (!iframe) return;
+  iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: '' }), '*');
+}
+
+// "?t=1599", "&t=26m39s", "#t=1h2m" — YouTube start-time forms, in seconds.
+function ytStartSeconds(url) {
+  const m = url.match(/[?&#](?:t|start)=([0-9hms]+)/);
+  if (!m) return 0;
+  const v = m[1];
+  if (/^\d+$/.test(v)) return +v;
+  let s = 0;
+  const h = v.match(/(\d+)h/);
+  const min = v.match(/(\d+)m/);
+  const sec = v.match(/(\d+)s/);
+  if (h) s += +h[1] * 3600;
+  if (min) s += +min[1] * 60;
+  if (sec) s += +sec[1];
+  return s;
+}
+
+// Deck music: the directive's slide decides when playback begins.
+let presMusic = null;
+
+function startPresentationMusic() {
+  if (!presMusic || presMusic.started) return;
+  const id = youtubeId(presMusic.url);
+  if (!id) return;
+  presMusic.started = true;
+  const t = ytStartSeconds(presMusic.url);
+  $('presentMusic').innerHTML =
+    `<iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&loop=1&playlist=${id}${t ? '&start=' + t : ''}&enablejsapi=1" allow="autoplay; encrypted-media" title="Background music"></iframe>`;
+  musicPlaying = true;
+  $('musicToggle').hidden = false;
+  $('musicToggle').classList.remove('muted');
+}
+
+async function openPresentation() {
+  const note = state.current;
+  if (!note || deck) return;
+  // Present what you see: save pending editor changes first.
+  if (state.editing && state.dirty) {
+    const updated = await api.save(note.file, $('editor').value);
+    applySaved(updated);
+  }
+  const body = state.current.body;
+  const musicUrl = (body.match(/<!--\s*music:\s*(\S+)\s*-->/) || [])[1] || null;
+
+  $('presentView').hidden = false;
+  const slidesEl = $('presentSlides');
+  slidesEl.innerHTML = '';
+  const chunks = splitSlides(expandTransclusions(body));
+  // Slide 1's transition directive is the deck default; on later slides the
+  // directive overrides for that slide only (reveal's data-transition).
+  const transition = (chunks[0].match(/<!--\s*transition:\s*([\w-]+)\s*-->/) || [])[1] || 'slide';
+  presMusic = null;
+  for (const [i, chunk] of chunks.entries()) {
+    const sec = document.createElement('section');
+    slidesEl.appendChild(sec);
+    renderMarkdown(sec, chunk, { staticMermaid: true });
+    sec.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+    await renderMermaidStatic(sec);
+    if (/<!--\s*steps\s*-->/.test(chunk)) {
+      sec.querySelectorAll(':scope > ul > li, :scope > ol > li').forEach((li) => li.classList.add('fragment'));
+    }
+    const sound = (chunk.match(/<!--\s*sound:\s*(\S+)\s*-->/) || [])[1];
+    if (sound) sec.dataset.sound = sound.replace('@attachment/', '/attachments/');
+    if (i > 0) {
+      const own = (chunk.match(/<!--\s*transition:\s*([\w-]+)\s*-->/) || [])[1];
+      if (own) sec.dataset.transition = own;
+    }
+    const bg = (chunk.match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1];
+    if (bg) sec.setAttribute('data-background-color', bg);
+    const fg = (chunk.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
+    if (fg) {
+      sec.style.color = fg;
+      sec.classList.add('slide-fg');
+    }
+    // Music begins on the slide that carries the directive.
+    if (!presMusic && /<!--\s*music:/.test(chunk) && musicUrl) {
+      presMusic = { url: musicUrl, startAt: i, started: false };
+    }
+  }
+
+  deck = new Reveal($('presentRoot'), {
+    embedded: true,
+    transition,
+    hash: false,
+    controls: true,
+    progress: true,
+    center: true,
+    // Slides carry clickable media and transcript folds — keep the cursor.
+    hideInactiveCursor: false,
+    keyboard: {
+      27: null, // Esc is ours — exits the presentation
+      32: () => {
+        // Space toggles the current slide's media; advances otherwise.
+        const slide = deck.getCurrentSlide();
+        const media = slide.querySelector('video, audio') ||
+          (slide.dataset.sound && deckAudio ? deckAudio : null);
+        if (media) {
+          if (media.paused) media.play().catch(() => {});
+          else media.pause();
+        } else {
+          deck.next();
+        }
+      }
+    }
+  });
+  await deck.initialize();
+  deck.on('slidechanged', (e) => {
+    playSlideSound(e.currentSlide);
+    if (presMusic && !presMusic.started && deck.getIndices().h >= presMusic.startAt) {
+      startPresentationMusic();
+    }
+  });
+  playSlideSound(deck.getCurrentSlide());
+  if (presMusic && presMusic.startAt === 0) startPresentationMusic();
+}
+
+function closePresentation() {
+  if (!deck) return;
+  try { deck.destroy(); } catch (e) { /* reveal already gone */ }
+  deck = null;
+  playSlideSound(null);
+  presMusic = null;
+  $('presentMusic').innerHTML = '';
+  $('musicToggle').hidden = true;
+  $('presentSlides').innerHTML = '';
+  $('presentView').hidden = true;
+}
+
+/* ——— presentation editor: slide rail ——— */
+
+// Index just past the closing --- of the front matter block in raw text.
+function frontmatterEndIndex(raw) {
+  if (!raw.startsWith('---')) return 0;
+  const end = raw.indexOf('\n---', 3);
+  if (end === -1) return 0;
+  const nl = raw.indexOf('\n', end + 1 + 3);
+  return nl === -1 ? raw.length : nl + 1;
+}
+
+// Slide ranges [{start, end}] in the editor's raw text (front matter excluded).
+function computeSlideRanges(raw) {
+  const fmEnd = frontmatterEndIndex(raw);
+  const ranges = [];
+  let start = fmEnd;
+  let inFence = false;
+  let pos = fmEnd;
+  for (const line of raw.slice(fmEnd).split('\n')) {
+    if (/^```/.test(line.trim())) inFence = !inFence;
+    if (!inFence && /^-{3,}\s*$/.test(line)) {
+      ranges.push({ start, end: pos });
+      start = pos + line.length + 1;
+    }
+    pos += line.length + 1;
+  }
+  ranges.push({ start, end: raw.length });
+  return ranges;
+}
+
+function isDeckNote(note) {
+  return (
+    note.tags.includes('Presentation') ||
+    splitSlides(note.body).length > 1 ||
+    /<!--\s*(transition|music|steps|sound)\b/.test(note.body)
+  );
+}
+
+function slideThumbHtml(chunk) {
+  const cleaned = chunk
+    .replace(/```mermaid[\s\S]*?(```|$)/g, '\n<div class="thumb-diagram">◇ diagram</div>\n')
+    .replace(/```[\s\S]*?(```|$)/g, '\n<div class="thumb-diagram">‹/› code</div>\n');
+  try {
+    return marked.parse(preprocess(cleaned), { gfm: true, breaks: true });
+  } catch (e) {
+    return escapeHtml(chunk);
+  }
+}
+
+/* ——— deck editor modal ——— */
+
+const deckEd = { open: false, file: null, fm: '', slides: [], cur: 0, dirty: false };
+let deckPreviewTimer = null;
+let deckThumbTimer = null;
+
+const dcEl = () => $('deckCode');
+
+// Undo-friendly replace in the deck slide textarea.
+function dcReplace(from, to, text) {
+  const box = dcEl();
+  box.focus();
+  box.setSelectionRange(from, to);
+  if (text) document.execCommand('insertText', false, text);
+  else document.execCommand('delete');
+  deckEd.dirty = true;
+}
+
+function deckSerialize() {
+  return deckEd.fm + '\n' + deckEd.slides.map((s) => s.trim()).join('\n\n---\n\n') + '\n';
+}
+
+function deckCommitCurrent() {
+  if (deckEd.slides.length) deckEd.slides[deckEd.cur] = dcEl().value;
+}
+
+function renderDeckThumbs() {
+  $('deckThumbs').innerHTML = deckEd.slides
+    .map((chunk, i) => {
+      const c = chunk.trim();
+      const bg = (c.match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1];
+      const fg = (c.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
+      const tint = `${bg ? `background:${bg};` : ''}${fg ? `color:${fg};` : ''}`;
+      return `<div class="slide-thumb${i === deckEd.cur ? ' active' : ''}" data-i="${i}" title="Slide ${i + 1}"${tint ? ` style="${tint}"` : ''}>
+        <div class="thumb-canvas"${fg ? ` style="color:${fg}"` : ''}>${c ? slideThumbHtml(c) : '<p class="thumb-empty">(empty)</p>'}</div>
+        <span class="thumb-num">${i + 1}</span>
+        <span class="thumb-tools">
+          <button data-move="up" data-i="${i}" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button data-move="down" data-i="${i}" title="Move down" ${i === deckEd.slides.length - 1 ? 'disabled' : ''}>↓</button>
+          <button data-del="${i}" title="Delete slide" ${deckEd.slides.length === 1 ? 'disabled' : ''}>×</button>
+        </span>
+      </div>`;
+    })
+    .join('');
+}
+
+async function renderDeckPreview() {
+  const box = $('deckPreview');
+  const chunk = dcEl().value.trim();
+  if (!chunk) {
+    box.innerHTML = '<p class="thumb-empty">(empty slide)</p>';
+    return;
+  }
+  renderMarkdown(box, chunk, { staticMermaid: true });
+  box.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+  const bg = (chunk.match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1];
+  box.style.backgroundColor = bg || '';
+  const fg = (chunk.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
+  box.style.color = fg || '';
+  await renderMermaidStatic(box);
+}
+
+function scheduleDeckPreview() {
+  clearTimeout(deckPreviewTimer);
+  deckPreviewTimer = setTimeout(renderDeckPreview, 300);
+  clearTimeout(deckThumbTimer);
+  deckThumbTimer = setTimeout(() => {
+    deckCommitCurrent();
+    renderDeckThumbs();
+  }, 700);
+}
+
+function deckLoadSlide(i) {
+  deckCommitCurrent();
+  deckEd.cur = Math.max(0, Math.min(i, deckEd.slides.length - 1));
+  dcEl().value = deckEd.slides[deckEd.cur];
+  renderDeckThumbs();
+  renderDeckPreview();
+  syncSlideTransitionSelect();
+  syncSlideBg();
+  syncSlideFg();
+  document.querySelector('#deckThumbs .slide-thumb.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+async function openDeckEditor() {
+  const note = state.current;
+  if (!note) return;
+  if (state.editing) await exitEdit({ save: true });
+  const raw = await api.raw(note.file);
+  const fmEnd = frontmatterEndIndex(raw);
+  deckEd.file = note.file;
+  deckEd.fm = raw.slice(0, fmEnd);
+  const bodyPart = raw.slice(fmEnd);
+  deckEd.slides = splitSlides(bodyPart).map((s) => s.trim());
+  if (!deckEd.slides.length) deckEd.slides = ['# ' + note.title];
+  deckEd.cur = 0;
+  deckEd.dirty = false;
+  deckEd.open = true;
+  const tr = (deckEd.slides[0].match(/<!--\s*transition:\s*([\w-]+)\s*-->/) || [])[1] || '';
+  $('deckTransition').value = ['slide', 'fade', 'zoom', 'convex', 'concave', 'none'].includes(tr) ? tr : '';
+  syncSlideTransitionSelect();
+  syncSlideBg();
+  syncSlideFg();
+  $('deckModal').hidden = false;
+  // Borrow the main editor's toolbar — same buttons, same listeners,
+  // retargeted at the slide pane.
+  $('deckToolbarSlot').appendChild($('editorToolbar'));
+  tbBox = dcEl();
+  applyDeckTbCollapsed();
+  dcEl().value = deckEd.slides[0];
+  renderDeckThumbs();
+  renderDeckPreview();
+  dcEl().focus();
+}
+
+function applyDeckTbCollapsed() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('deckTbCollapsed') === '1'; } catch (e) { /* private mode */ }
+  $('editorToolbar').classList.toggle('tb-collapsed', collapsed && deckEd.open);
+  $('deckTbToggle').textContent = collapsed ? '+' : '–';
+}
+
+$('deckTbToggle').addEventListener('click', () => {
+  try {
+    const collapsed = localStorage.getItem('deckTbCollapsed') === '1';
+    localStorage.setItem('deckTbCollapsed', collapsed ? '0' : '1');
+  } catch (e) { /* private mode */ }
+  applyDeckTbCollapsed();
+});
+
+async function saveDeck() {
+  deckCommitCurrent();
+  const updated = await api.save(deckEd.file, deckSerialize());
+  applySaved(updated);
+  deckEd.dirty = false;
+  if (state.current && state.current.file === updated.file && !state.editing) {
+    renderMarkdown($('rendered'), updated.body);
+    renderBacklinks(updated);
+    $('noteDate').textContent = formatDate(updated.modified);
+  }
+  return updated;
+}
+
+async function closeDeckEditor() {
+  closeSuggest();
+  closeEmoji();
+  await saveDeck();
+  deckEd.open = false;
+  $('deckModal').hidden = true;
+  // Return the toolbar to the main editor.
+  $('editorToolbar').classList.remove('tb-collapsed');
+  $('editorWrap').insertBefore($('editorToolbar'), $('editor'));
+  tbBox = null;
+}
+
+$('deckBtn').addEventListener('click', openDeckEditor);
+$('deckDone').addEventListener('click', closeDeckEditor);
+
+$('deckPresentBtn').addEventListener('click', async () => {
+  await saveDeck();
+  openPresentation();
+});
+
+$('deckThumbs').addEventListener('click', (e) => {
+  const move = e.target.closest('[data-move]');
+  const del = e.target.closest('[data-del]');
+  if (move) {
+    const i = Number(move.dataset.i);
+    const j = i + (move.dataset.move === 'up' ? -1 : 1);
+    if (j < 0 || j >= deckEd.slides.length) return;
+    deckCommitCurrent();
+    [deckEd.slides[i], deckEd.slides[j]] = [deckEd.slides[j], deckEd.slides[i]];
+    deckEd.dirty = true;
+    if (deckEd.cur === i) deckEd.cur = j;
+    else if (deckEd.cur === j) deckEd.cur = i;
+    dcEl().value = deckEd.slides[deckEd.cur];
+    renderDeckThumbs();
+    renderDeckPreview();
+    return;
+  }
+  if (del) {
+    if (deckEd.slides.length === 1) return;
+    if (!del.classList.contains('confirming')) {
+      del.classList.add('confirming');
+      setTimeout(() => del.classList.remove('confirming'), 2500);
+      return;
+    }
+    const i = Number(del.dataset.del);
+    deckEd.slides.splice(i, 1);
+    deckEd.dirty = true;
+    deckEd.cur = Math.min(deckEd.cur, deckEd.slides.length - 1);
+    dcEl().value = deckEd.slides[deckEd.cur];
+    renderDeckThumbs();
+    renderDeckPreview();
+    return;
+  }
+  const thumb = e.target.closest('.slide-thumb');
+  if (thumb) deckLoadSlide(Number(thumb.dataset.i));
+});
+
+$('deckAddSlide').addEventListener('click', () => {
+  deckCommitCurrent();
+  deckEd.slides.splice(deckEd.cur + 1, 0, '## New slide\n');
+  deckEd.dirty = true;
+  deckLoadSlide(deckEd.cur + 1);
+});
+
+// Deck default lives on slide 1; per-slide overrides stay untouched.
+$('deckTransition').addEventListener('change', (e) => {
+  const t = e.target.value;
+  deckCommitCurrent();
+  deckEd.slides[0] = deckEd.slides[0].replace(/<!--\s*transition:[^>]*-->\n*/g, '').trim();
+  if (t) deckEd.slides[0] = `<!-- transition: ${t} -->\n\n` + deckEd.slides[0];
+  deckEd.dirty = true;
+  dcEl().value = deckEd.slides[deckEd.cur];
+  renderDeckThumbs();
+  renderDeckPreview();
+});
+
+function syncSlideTransitionSelect() {
+  const sel = $('slideTransition');
+  if (deckEd.cur === 0) {
+    sel.value = '';
+    sel.disabled = true;
+    sel.title = 'Slide 1 carries the deck default — use the header select';
+  } else {
+    sel.disabled = false;
+    sel.title = 'Transition for this slide only';
+    const tr = (deckEd.slides[deckEd.cur].match(/<!--\s*transition:\s*([\w-]+)\s*-->/) || [])[1] || '';
+    sel.value = ['slide', 'fade', 'zoom', 'convex', 'concave', 'none'].includes(tr) ? tr : '';
+  }
+}
+
+$('slideTransition').addEventListener('change', (e) => {
+  if (deckEd.cur === 0) return;
+  deckCommitCurrent();
+  let s = deckEd.slides[deckEd.cur].replace(/<!--\s*transition:[^>]*-->\n*/g, '').trim();
+  if (e.target.value) s = `<!-- transition: ${e.target.value} -->\n\n` + s;
+  deckEd.slides[deckEd.cur] = s;
+  deckEd.dirty = true;
+  dcEl().value = s;
+  renderDeckThumbs();
+  renderDeckPreview();
+});
+
+function syncSlideBg() {
+  const bg = (deckEd.slides[deckEd.cur].match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1];
+  const swatch = $('slideBgSwatch');
+  swatch.style.background = bg || 'transparent';
+  swatch.classList.toggle('bg-none', !bg);
+}
+
+function setSlideBackground(color) {
+  deckCommitCurrent();
+  let s = deckEd.slides[deckEd.cur].replace(/<!--\s*background:[^>]*-->\n*/g, '').trim();
+  if (color) s = `<!-- background: ${color} -->\n\n` + s;
+  deckEd.slides[deckEd.cur] = s;
+  deckEd.dirty = true;
+  dcEl().value = s;
+  renderDeckThumbs();
+  renderDeckPreview();
+  syncSlideBg();
+}
+
+function setSlideTextColor(color) {
+  deckCommitCurrent();
+  let s = deckEd.slides[deckEd.cur].replace(/<!--\s*color:[^>]*-->\n*/g, '').trim();
+  if (color) s = `<!-- color: ${color} -->\n\n` + s;
+  deckEd.slides[deckEd.cur] = s;
+  deckEd.dirty = true;
+  dcEl().value = s;
+  renderDeckThumbs();
+  renderDeckPreview();
+  syncSlideFg();
+}
+
+function syncSlideFg() {
+  const fg = (deckEd.slides[deckEd.cur].match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
+  const swatch = $('slideFgSwatch');
+  swatch.style.background = fg || 'transparent';
+  swatch.classList.toggle('bg-none', !fg);
+}
+
+$('slideBgBtn').addEventListener('click', () => {
+  $('colorPanel').hidden || colorMode !== 'bg'
+    ? openColorPanelFor('bg', $('slideBgBtn'))
+    : closeColorPanel();
+});
+$('slideFgBtn').addEventListener('click', () => {
+  $('colorPanel').hidden || colorMode !== 'fg'
+    ? openColorPanelFor('fg', $('slideFgBtn'))
+    : closeColorPanel();
+});
+
+$('deckMusic').addEventListener('click', () => {
+  const box = dcEl();
+  const tpl = '<!-- music: https://www.youtube.com/watch?v=VIDEO_ID -->\n';
+  dcReplace(0, 0, tpl);
+  const s = tpl.indexOf('https://');
+  box.setSelectionRange(s, tpl.length - ' -->\n'.length);
+  scheduleDeckPreview();
+});
+
+const deckToolbar = {
+  steps: () => {
+    const v = dcEl().value;
+    if (/<!--\s*steps\s*-->/.test(v)) {
+      const m = v.match(/<!--\s*steps\s*-->\n?/);
+      dcReplace(m.index, m.index + m[0].length, '');
+    } else {
+      dcReplace(0, 0, '<!-- steps -->\n\n');
+    }
+  },
+  sound: () => {
+    const tpl = '<!-- sound: @attachment/file.mp3 -->\n';
+    dcReplace(0, 0, tpl);
+    const s = tpl.indexOf('@attachment/');
+    dcEl().setSelectionRange(s, s + '@attachment/file.mp3'.length);
+  },
+  embed: () => {
+    const box = dcEl();
+    const s = box.selectionStart;
+    dcReplace(s, box.selectionEnd, '![[]]');
+    box.setSelectionRange(s + 3, s + 3);
+    // Cursor sits between the brackets — pop the note dropdown right away.
+    updateSuggest(box);
+  }
+};
+
+document.querySelector('.deck-toolbar').addEventListener('mousedown', (e) => {
+  // Keep the slide pane's caret — except controls that need real focus:
+  // inputs (emoji search, color pickers) and <select> dropdowns.
+  if (!e.target.closest('input, select')) e.preventDefault();
+});
+document.querySelector('.deck-toolbar').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-dk]');
+  if (btn && deckToolbar[btn.dataset.dk]) {
+    deckToolbar[btn.dataset.dk]();
+    scheduleDeckPreview();
+  }
+});
+
+dcEl().addEventListener('input', () => {
+  deckEd.dirty = true;
+  scheduleDeckPreview();
+  updateSuggest(dcEl());
+});
+dcEl().addEventListener('click', () => updateSuggest(dcEl()));
+dcEl().addEventListener('blur', closeSuggest);
+dcEl().addEventListener('scroll', closeSuggest);
+dcEl().addEventListener('keydown', (e) => {
+  if (handleSuggestKeys(e)) return;
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    saveDeck();
+  } else if (e.key === 'Tab' && !e.shiftKey) {
+    e.preventDefault();
+    dcReplace(dcEl().selectionStart, dcEl().selectionEnd, '  ');
+  }
+});
+
+$('presentBtn').addEventListener('click', openPresentation);
+$('presentClose').addEventListener('click', closePresentation);
+$('musicToggle').addEventListener('click', () => {
+  musicPlaying = !musicPlaying;
+  musicCommand(musicPlaying ? 'playVideo' : 'pauseVideo');
+  $('musicToggle').classList.toggle('muted', !musicPlaying);
 });
 
 /* ——— meeting recording ——— */
@@ -1471,7 +2161,6 @@ async function startMeeting() {
   $('meetingStatus').textContent = 'Recording';
   $('recBarState').textContent = 'Recording…';
   $('recBar').hidden = false;
-  $('recBtn').hidden = true;
   openMeetingView();
   $('meetingNotes').focus();
   rec.timerInt = setInterval(updateMeetingTimers, 500);
@@ -1558,7 +2247,6 @@ function teardownMeeting() {
   rec.accMs = 0;
   rec.wave = [];
   $('recBar').hidden = true;
-  $('recBtn').hidden = false;
   $('recTime').textContent = '0:00';
   $('recRemind').hidden = true;
 }
@@ -1635,7 +2323,6 @@ function discardMeeting() {
   }
 }
 
-$('recBtn').addEventListener('click', startMeeting);
 $('recBar').addEventListener('click', openMeetingView);
 $('recRemindKeep').addEventListener('click', () => { $('recRemind').hidden = true; });
 $('recRemindStop').addEventListener('click', () => {
@@ -1761,7 +2448,8 @@ function renderEmojiGrid() {
 }
 
 function openEmoji() {
-  emojiCaret = { s: ed.selectionStart, e: ed.selectionEnd };
+  const box = tbb();
+  emojiCaret = { s: box.selectionStart, e: box.selectionEnd };
   const panel = $('emojiPanel');
   panel.hidden = false;
   const btn = $('emojiBtn');
@@ -1773,14 +2461,14 @@ function openEmoji() {
 
 function closeEmoji() {
   $('emojiPanel').hidden = true;
-  ed.focus();
+  tbb().focus();
 }
 
 function pickEmoji(ch) {
   closeEmoji();
-  edReplace(emojiCaret.s, emojiCaret.e, ch);
+  tbReplace(emojiCaret.s, emojiCaret.e, ch);
   rememberEmoji(ch);
-  setDirty(true);
+  tbDirty();
 }
 
 $('emojiBtn').addEventListener('click', () => {
@@ -1809,40 +2497,163 @@ document.addEventListener('mousedown', (e) => {
   }
 });
 
+/* ——— text color ——— */
+
+let colorCaret = null;
+let colorMode = 'text'; // 'text' wraps the selection; 'bg' sets the slide background
+
+function openColorPanel() {
+  colorMode = 'text';
+  const box = tbb();
+  colorCaret = { s: box.selectionStart, e: box.selectionEnd };
+  const panel = $('colorPanel');
+  panel.hidden = false;
+  const btn = $('colorBtn');
+  panel.style.left = Math.max(0, Math.min(btn.offsetLeft, $('editorToolbar').clientWidth - 260)) + 'px';
+}
+
+function openColorPanelFor(mode, anchorBtn) {
+  colorMode = mode;
+  const panel = $('colorPanel');
+  panel.hidden = false;
+  // These buttons live outside the toolbar the panel is anchored in.
+  const btnRect = anchorBtn.getBoundingClientRect();
+  const tbRect = $('editorToolbar').getBoundingClientRect();
+  panel.style.left = Math.max(0, Math.min(btnRect.left - tbRect.left, $('editorToolbar').clientWidth - 260)) + 'px';
+}
+
+function applyPickedColor(color) {
+  if (colorMode === 'bg') {
+    setSlideBackground(color);
+    closeColorPanel();
+  } else if (colorMode === 'fg') {
+    setSlideTextColor(color);
+    closeColorPanel();
+  } else {
+    applyTextColor(color);
+  }
+}
+
+function closeColorPanel() {
+  $('colorPanel').hidden = true;
+}
+
+function applyTextColor(color) {
+  if (!colorCaret) return;
+  const box = tbb();
+  let sel = box.value.slice(colorCaret.s, colorCaret.e) || 'colored text';
+  // Re-coloring an already-colored selection swaps the color instead of nesting.
+  const existing = sel.match(/^<span style="color:[^"]*">([\s\S]*)<\/span>$/);
+  if (existing) sel = existing[1];
+  const wrapped = `<span style="color:${color}">${sel}</span>`;
+  tbReplace(colorCaret.s, colorCaret.e, wrapped);
+  const inner = colorCaret.s + wrapped.indexOf('>') + 1;
+  box.setSelectionRange(inner, inner + sel.length);
+  closeColorPanel();
+  tbDirty();
+}
+
+function clearTextColor() {
+  if (!colorCaret) return;
+  const box = tbb();
+  const v = box.value;
+  let { s, e } = colorCaret;
+  let sel = v.slice(s, e);
+  // Selections usually sit inside the span — expand to the enclosing one.
+  if (!/<span style="color:/.test(sel)) {
+    const openIdx = v.lastIndexOf('<span style="color:', s);
+    if (openIdx !== -1) {
+      const openEnd = v.indexOf('>', openIdx);
+      const closeIdx = v.indexOf('</span>', Math.max(openEnd, e));
+      const firstCloseAfterOpen = v.indexOf('</span>', openEnd);
+      if (openEnd !== -1 && openEnd < s && closeIdx !== -1 && firstCloseAfterOpen >= e) {
+        s = openIdx;
+        e = closeIdx + '</span>'.length;
+        sel = v.slice(s, e);
+      }
+    }
+  }
+  const stripped = sel.replace(/<span style="color:[^"]*">/g, '').replace(/<\/span>/g, '');
+  if (stripped !== sel) {
+    tbReplace(s, e, stripped);
+    box.setSelectionRange(s, s + stripped.length);
+    tbDirty();
+  }
+  closeColorPanel();
+}
+
+$('colorBtn').addEventListener('click', () => {
+  $('colorPanel').hidden ? openColorPanel() : closeColorPanel();
+});
+$('colorPanel').addEventListener('click', (e) => {
+  const swatch = e.target.closest('.color-swatch');
+  if (swatch) applyPickedColor(swatch.dataset.color);
+  else if (e.target.closest('#colorClear')) {
+    if (colorMode === 'bg') {
+      setSlideBackground(null);
+      closeColorPanel();
+    } else if (colorMode === 'fg') {
+      setSlideTextColor(null);
+      closeColorPanel();
+    } else {
+      clearTextColor();
+    }
+  }
+});
+$('colorCustom').addEventListener('change', (e) => applyPickedColor(e.target.value));
+$('colorCustomBtn').addEventListener('click', () => {
+  // Opens the OS color dialog: draggable spectrum + manual RGB/hex entry.
+  try { $('colorCustom').showPicker(); } catch (e) { $('colorCustom').click(); }
+});
+document.addEventListener('mousedown', (e) => {
+  if (!$('colorPanel').hidden && !e.target.closest('#colorPanel, #colorBtn')) closeColorPanel();
+});
+
 /* ——— paste / drop attachments into the editor ——— */
 
-async function insertAttachment(blob, nameHint) {
+async function insertAttachment(box, blob, nameHint) {
   const { file } = await api.upload(blob, nameHint);
   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(file);
   const md = isImage ? `![](@attachment/${file})` : `[${file}](@attachment/${file})`;
-  edReplace(ed.selectionStart, ed.selectionEnd, md + '\n');
-  setDirty(true);
+  box.focus();
+  document.execCommand('insertText', false, md + '\n');
+  if (box === ed) {
+    setDirty(true);
+  } else {
+    deckEd.dirty = true;
+    scheduleDeckPreview();
+  }
 }
 
-ed.addEventListener('paste', (e) => {
-  const files = [...(e.clipboardData?.items || [])]
-    .filter((i) => i.kind === 'file')
-    .map((i) => i.getAsFile())
-    .filter(Boolean);
-  if (!files.length) return;
-  e.preventDefault();
-  (async () => {
-    // Chrome names clipboard screenshots "image.png" — let the server pick a dated name.
-    for (const f of files) await insertAttachment(f, f.name === 'image.png' ? '' : f.name);
-  })();
-});
+// Paste or drop images/files into either editor — main note or deck slide.
+function wireAttachmentInput(box) {
+  box.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.items || [])]
+      .filter((i) => i.kind === 'file')
+      .map((i) => i.getAsFile())
+      .filter(Boolean);
+    if (!files.length) return;
+    e.preventDefault();
+    (async () => {
+      // Chrome names clipboard screenshots "image.png" — let the server pick a dated name.
+      for (const f of files) await insertAttachment(box, f, f.name === 'image.png' ? '' : f.name);
+    })();
+  });
+  box.addEventListener('dragover', (e) => {
+    if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+  });
+  box.addEventListener('drop', (e) => {
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    (async () => {
+      for (const f of files) await insertAttachment(box, f, f.name);
+    })();
+  });
+}
 
-ed.addEventListener('dragover', (e) => {
-  if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
-});
-ed.addEventListener('drop', (e) => {
-  const files = [...(e.dataTransfer?.files || [])];
-  if (!files.length) return;
-  e.preventDefault();
-  (async () => {
-    for (const f of files) await insertAttachment(f, f.name);
-  })();
-});
+wireAttachmentInput(ed);
+wireAttachmentInput($('deckCode'));
 
 /* ——— quick-open (⌘P) ——— */
 
@@ -2051,9 +2862,9 @@ $('findPrev').addEventListener('click', () => stepFind(-1));
 $('findClose').addEventListener('click', closeFind);
 
 // mousedown would move focus out of the textarea and lose the selection —
-// except inside the emoji panel, whose search input needs focus itself.
+// except the emoji panel's search input and the native color input.
 $('editorToolbar').addEventListener('mousedown', (e) => {
-  if (!e.target.closest('#emojiPanel')) e.preventDefault();
+  if (!e.target.closest('input, select')) e.preventDefault();
 });
 $('editorToolbar').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-md]');
@@ -2061,25 +2872,7 @@ $('editorToolbar').addEventListener('click', (e) => {
 });
 
 ed.addEventListener('keydown', (e) => {
-  if (suggest.open) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const len = suggest.items.length;
-      suggest.index = (suggest.index + (e.key === 'ArrowDown' ? 1 : len - 1)) % len;
-      renderSuggest();
-      return;
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      acceptSuggest(suggest.items[suggest.index]);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeSuggest();
-      return;
-    }
-  }
+  if (handleSuggestKeys(e)) return;
   const mod = e.metaKey || e.ctrlKey;
   if (mod && !e.shiftKey && !e.altKey && e.key === 'b') {
     e.preventDefault();
@@ -2101,10 +2894,40 @@ $('rendered').addEventListener('change', (e) => {
   if (e.target.matches('input[type="checkbox"]')) toggleTask(Number(e.target.dataset.taskIndex));
 });
 
+let createKind = 'note';
+
+function slidesStarter(title) {
+  return (
+    `<!-- transition: slide -->\n\n# ${title}\n\nA subtitle, or who it's for\n\n---\n\n` +
+    `## First point\n\n<!-- steps -->\n\n- One thing\n- Another thing\n- The punchline\n\n---\n\n## Thanks 🎉\n`
+  );
+}
+
 $('newNote').addEventListener('click', () => {
-  const form = $('newNoteForm');
-  form.hidden = !form.hidden;
-  if (!form.hidden) $('newNoteTitle').focus();
+  const menu = $('createMenu');
+  menu.hidden = !menu.hidden;
+  $('newNoteForm').hidden = true;
+});
+
+$('createMenu').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-create]');
+  if (!item) return;
+  $('createMenu').hidden = true;
+  if (item.dataset.create === 'meeting') {
+    startMeeting();
+    return;
+  }
+  createKind = item.dataset.create;
+  $('newNoteTitle').placeholder =
+    createKind === 'slides' ? 'Presentation title, then Enter…' : 'Note title, then Enter…';
+  $('newNoteForm').hidden = false;
+  $('newNoteTitle').focus();
+});
+
+document.addEventListener('mousedown', (e) => {
+  if (!$('createMenu').hidden && !e.target.closest('#createMenu, #newNote')) {
+    $('createMenu').hidden = true;
+  }
 });
 
 $('newNoteTitle').addEventListener('keydown', async (e) => {
@@ -2114,13 +2937,22 @@ $('newNoteTitle').addEventListener('keydown', async (e) => {
     const title = $('newNoteTitle').value.trim();
     if (!title) return;
     const { file } = await api.create(title);
+    if (createKind === 'slides') {
+      let raw = await api.raw(file);
+      raw = setTagsInRaw(raw, ['Presentation']);
+      // Replace the default body with a starter deck.
+      const fmEnd = frontmatterEndIndex(raw);
+      raw = raw.slice(0, fmEnd) + '\n' + slidesStarter(title);
+      await api.save(file, raw);
+    }
     state.notes = await api.list();
     $('newNoteTitle').value = '';
     $('newNoteForm').hidden = true;
     renderTags();
     renderList();
     openNote(file);
-    enterEdit();
+    if (createKind === 'slides') openDeckEditor();
+    else enterEdit();
   }
 });
 
@@ -2191,6 +3023,31 @@ $('trashList').addEventListener('click', async (e) => {
 
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
+  // Presentation mode: Esc exits; arrows/space belong to the deck; the
+  // app's own shortcuts stay out of the way.
+  if (deck) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closePresentation();
+    }
+    return;
+  }
+  // Deck editor open (and mermaid modal not on top of it): Esc = done;
+  // with focus outside any field, ↑/↓ walk through the slides.
+  if (deckEd.open && $('mmModal').hidden) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDeckEditor();
+      return;
+    }
+    const t = document.activeElement;
+    const inField = t && t.matches('input, textarea, select');
+    if (!inField && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      deckLoadSlide(deckEd.cur + (e.key === 'ArrowDown' ? 1 : -1));
+    }
+    return;
+  }
   // While editing a note, undo/redo always applies to the note editor — even
   // if focus drifted to the search bar or a button. With focus already in the
   // editor, native undo handles it; the mermaid editor keeps its own undo.

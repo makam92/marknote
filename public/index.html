@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/reveal.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -18,8 +19,12 @@
     <h1>Marknote</h1>
     <div class="brand-actions">
       <button id="themeToggle" class="btn-ghost" title="Switch light/dark theme">☾</button>
-      <button id="recBtn" class="btn-ghost" title="Record a meeting">🎙</button>
-      <button id="newNote" class="btn-accent" title="Create a new note">+ New</button>
+      <button id="newNote" class="btn-accent" title="Create a note, presentation or meeting recording">+ Create</button>
+    </div>
+    <div id="createMenu" class="create-menu" hidden>
+      <button data-create="note"><span class="cm-icon">📝</span> Note</button>
+      <button data-create="slides"><span class="cm-icon">📊</span> Presentation</button>
+      <button data-create="meeting"><span class="cm-icon">🎙</span> Meeting recording</button>
     </div>
   </header>
 
@@ -72,6 +77,8 @@
       </div>
       <div class="note-actions">
         <span id="saveState" class="save-state" aria-live="polite"></span>
+        <button id="deckBtn" title="Open the deck editor" hidden>Edit deck</button>
+        <button id="presentBtn" title="Present this note as slides — split on --- lines">Present</button>
         <button id="pinBtn" title="Keep this note at the top of the list">Pin</button>
         <button id="renameBtn" title="Rename note (updates links from other notes)">Rename</button>
         <button id="editBtn" title="Edit (⌘E)">Edit</button>
@@ -113,7 +120,23 @@
           <button data-md="table" title="Table">Table</button>
           <button data-md="image" title="Image (attachment)">Img</button>
           <button id="emojiBtn" title="Insert emoji">😊</button>
+          <button id="colorBtn" title="Text color"><span class="color-a">A</span></button>
         </span>
+        <div id="colorPanel" class="color-panel" hidden>
+          <button class="color-swatch" data-color="#000000" style="background:#000000" title="Black"></button>
+          <button class="color-swatch" data-color="#ffffff" style="background:#ffffff" title="White"></button>
+          <button class="color-swatch" data-color="#c0392b" style="background:#c0392b" title="Red"></button>
+          <button class="color-swatch" data-color="#e08a4e" style="background:#e08a4e" title="Orange"></button>
+          <button class="color-swatch" data-color="#b8860b" style="background:#b8860b" title="Gold"></button>
+          <button class="color-swatch" data-color="#2e7d43" style="background:#2e7d43" title="Green"></button>
+          <button class="color-swatch" data-color="#1f7a8c" style="background:#1f7a8c" title="Teal"></button>
+          <button class="color-swatch" data-color="#2b6cb0" style="background:#2b6cb0" title="Blue"></button>
+          <button class="color-swatch" data-color="#6b4fa0" style="background:#6b4fa0" title="Purple"></button>
+          <button class="color-swatch" data-color="#8a8378" style="background:#8a8378" title="Gray"></button>
+          <input type="color" id="colorCustom" value="#e08a4e" title="Custom color">
+          <button id="colorCustomBtn" title="Open the full color picker — drag the spectrum or type RGB/hex">Custom…</button>
+          <button id="colorClear" title="Remove the color">Clear</button>
+        </div>
         <div id="emojiPanel" class="emoji-panel" hidden>
           <input id="emojiSearch" type="text" placeholder="Search emoji…" autocomplete="off" spellcheck="false">
           <div id="emojiGrid" class="emoji-grid"></div>
@@ -161,6 +184,17 @@
 
 <div id="noteSuggest" class="note-suggest" hidden></div>
 
+<div id="presentView" class="present-view" hidden>
+  <div id="presentRoot" class="reveal">
+    <div id="presentSlides" class="slides"></div>
+  </div>
+  <div class="present-chrome">
+    <button id="musicToggle" hidden title="Pause/resume background music">♪</button>
+    <button id="presentClose" title="Exit presentation (Esc)">×</button>
+  </div>
+  <div id="presentMusic" class="present-music"></div>
+</div>
+
 <div id="recRemind" class="rec-remind" hidden>
   <span class="rec-dot"></span>
   <span id="recRemindText"></span>
@@ -172,6 +206,63 @@
   <div class="quick-box">
     <input id="quickInput" type="text" placeholder="Jump to note…" autocomplete="off" spellcheck="false">
     <div id="quickList"></div>
+  </div>
+</div>
+
+<div id="deckModal" class="deck-modal" hidden>
+  <div class="deck-box">
+    <header class="mm-head">
+      <strong>Presentation</strong>
+      <select id="deckTransition" title="Default transition between slides (stored on slide 1)">
+        <option value="">deck transition…</option>
+        <option value="slide">slide</option>
+        <option value="fade">fade</option>
+        <option value="zoom">zoom</option>
+        <option value="convex">convex</option>
+        <option value="concave">concave</option>
+        <option value="none">none</option>
+      </select>
+      <button id="deckMusic" title="Insert a background-music directive — paste a YouTube URL into it">♪ Music</button>
+      <span class="mm-hint">⌘S save &nbsp;·&nbsp; Esc done</span>
+      <span class="mm-spacer"></span>
+      <button id="deckPresentBtn" title="Save and present">▶ Present</button>
+      <button id="deckDone" class="btn-accent">Done</button>
+    </header>
+    <div class="deck-body">
+      <div class="deck-rail">
+        <div id="deckThumbs"></div>
+        <button id="deckAddSlide" class="add-slide" title="Add a slide after the current one">+ Slide</button>
+      </div>
+      <div class="deck-editcol">
+        <div class="deck-toolbar">
+          <div class="deck-toolbar-top">
+            <span class="tb-group deck-extras">
+              <button data-dk="steps" title="Toggle step-by-step bullets on this slide">☑ Steps</button>
+              <button data-dk="sound" title="Play a sound when this slide appears">🔉 Sound</button>
+              <button data-dk="embed" title="Embed another note's content">![[&hairsp;Note&hairsp;]]</button>
+            </span>
+            <span class="mm-spacer"></span>
+            <button id="slideFgBtn" title="Default text color for this slide"><span id="slideFgSwatch" class="bg-swatch"></span>&hairsp;Text</button>
+            <button id="slideBgBtn" title="Background color for this slide"><span id="slideBgSwatch" class="bg-swatch"></span>&hairsp;Bg</button>
+            <select id="slideTransition" title="Transition for this slide only">
+              <option value="">this slide: inherit</option>
+              <option value="slide">slide</option>
+              <option value="fade">fade</option>
+              <option value="zoom">zoom</option>
+              <option value="convex">convex</option>
+              <option value="concave">concave</option>
+              <option value="none">none</option>
+            </select>
+            <button id="deckTbToggle" class="deck-tb-toggle" title="Show/hide the full formatting toolbar">–</button>
+          </div>
+          <div id="deckToolbarSlot" class="deck-toolbar-slot"></div>
+        </div>
+        <textarea id="deckCode" spellcheck="false" aria-label="Slide source"></textarea>
+      </div>
+      <div class="deck-preview-wrap">
+        <div id="deckPreview" class="deck-preview"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -217,6 +308,7 @@
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/mermaid.min.js"></script>
 <script src="/vendor/fix-webm-duration.js"></script>
+<script src="/vendor/reveal.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
