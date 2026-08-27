@@ -104,9 +104,13 @@ Directives (HTML comments — invisible in normal note view):
 | `<!-- background: #1f7a8c -->` | slide | background color for that slide (any CSS color) |
 | `<!-- color: #ffffff -->` | slide | default text color for that slide |
 | `<!-- music: <youtube url> -->` | deck | background music; starts when the slide carrying the directive is reached (slide 1 = from the beginning); a `?t=`/`&t=` in the URL (seconds or `1h2m3s`) sets the start position in the video |
+| `<!-- notes ... -->` | slide | speaker notes (multiline OK) — invisible everywhere except the presenter view |
 
 `![[Note]]` embeds contribute their own `---` breaks as extra slides. The user presents
 via the Present button; the deck editor (Edit deck) is the interactive editing UI.
+"Presenter mode" (note ⋯ menu) opens the deck in a display window — auto-placed
+fullscreen on an external screen in the desktop app — while the main window shows
+current/next slide, speaker notes, timer and controls, synced via BroadcastChannel.
 
 ## Meeting notes
 

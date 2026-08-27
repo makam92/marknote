@@ -86,6 +86,7 @@
         <span class="note-menu-wrap">
           <button id="noteMenuBtn" class="menu-btn" title="More actions">⋯</button>
           <div id="noteMenu" class="create-menu note-menu" hidden>
+            <button id="presenterBtn" title="Present on a second screen with speaker notes here" hidden>Presenter mode</button>
             <button id="todoSuggestBtn" title="Let Claude suggest todos from this note" hidden>Suggest todos</button>
             <button id="renameBtn" title="Rename note (updates links from other notes)">Rename</button>
             <button id="deleteBtn" class="danger" title="Move note to trash">Delete</button>
@@ -310,6 +311,31 @@
         <div id="deckPreview" class="deck-preview"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="presenterView" class="presenter-view" hidden>
+  <header class="pres-head">
+    <strong>Presenter</strong>
+    <span id="presCounter" class="pres-counter"></span>
+    <span id="presTimer" class="pres-timer">0:00</span>
+    <span class="pres-spacer"></span>
+    <span id="presDisplayState" class="pres-display-state">Waiting for display window…</span>
+    <select id="presDisplayPick" class="pres-display-pick" title="Which screen shows the presentation" hidden></select>
+    <button id="presBtnPrev" title="Previous (←)">◀</button>
+    <button id="presBtnNext" title="Next (→ or Space)">▶</button>
+    <button id="presClose" class="danger" title="End presentation (Esc)">End</button>
+  </header>
+  <div class="pres-body">
+    <div class="pres-main">
+      <div id="presCurrent" class="pres-slide pres-cur"></div>
+    </div>
+    <aside class="pres-side">
+      <div class="pres-label">Next slide</div>
+      <div id="presNext" class="pres-slide pres-nxt"></div>
+      <div class="pres-label">Speaker notes</div>
+      <div id="presNotes" class="pres-notes"></div>
+    </aside>
   </div>
 </div>
 

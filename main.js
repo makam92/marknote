@@ -1,5 +1,12 @@
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, screen, ipcMain } = require('electron');
+const path = require('path');
+const fs = require('fs');
 const { start, PORT } = require('./server');
+
+// Presenter-mode debug trail — read .presenter-debug.log when placement misbehaves.
+function dbg(msg) {
+  try { fs.appendFileSync(path.join(__dirname, '.presenter-debug.log'), new Date().toISOString() + ' ' + msg + '\n'); } catch (e) { /* best-effort */ }
+}
 
 app.setName('Marknote');
 
@@ -16,14 +23,27 @@ function createWindow() {
     backgroundColor: '#ffffff',
     webPreferences: {
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js')
     }
   });
 
   win.loadURL(`http://localhost:${PORT}`);
 
   // External links open in the default browser, not inside the app.
+  // Exception: the presenter mode's display window — created covering the
+  // full bounds of the external screen (TV/projector) with fullscreen set at
+  // creation. Bounds + fullscreen together at creation is what reliably lands
+  // on the right display (same recipe as the serializer app's cast window).
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith(`http://localhost:${PORT}`) && url.includes('#display/')) {
+      const primary = screen.getPrimaryDisplay();
+      const target = screen.getAllDisplays().find((d) => d.id !== primary.id);
+      const opts = target
+        ? { x: target.bounds.x, y: target.bounds.y, width: target.bounds.width, height: target.bounds.height, fullscreen: true, frame: false, backgroundColor: '#000000' }
+        : { width: 1024, height: 640, backgroundColor: '#000000' };
+      return { action: 'allow', overrideBrowserWindowOptions: opts };
+    }
     shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -34,6 +54,57 @@ function createWindow() {
     }
   });
 }
+
+// ——— presenter mode: display window on a chosen screen ———
+// Created by the MAIN process with the target display's full bounds +
+// fullscreen at creation (serializer's proven recipe) — window.open placement
+// from the renderer is unreliable across screens.
+let displayWindow = null;
+
+function openDisplayWindow(displayId, file) {
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const target = displays.find((d) => d.id === displayId)
+    || displays.find((d) => d.id !== primary.id)
+    || primary;
+  dbg(`present:open requested=${displayId} chose=${target.id} primary=${primary.id} bounds=${JSON.stringify(target.bounds)} all=${JSON.stringify(displays.map((d) => ({ id: d.id, label: d.label, bounds: d.bounds })))}`);
+  if (displayWindow && !displayWindow.isDestroyed()) {
+    const old = displayWindow;
+    displayWindow = null;
+    old.removeAllListeners('closed');
+    old.destroy();
+  }
+  const external = target.id !== primary.id;
+  const b = target.bounds;
+  displayWindow = new BrowserWindow({
+    x: external ? b.x : b.x + 80,
+    y: external ? b.y : b.y + 80,
+    width: external ? b.width : 1024,
+    height: external ? b.height : 640,
+    fullscreen: external,
+    frame: !external,
+    backgroundColor: '#000000',
+    webPreferences: { contextIsolation: true, nodeIntegration: false }
+  });
+  displayWindow.loadURL(`http://localhost:${PORT}/#display/${encodeURIComponent(file)}`);
+  displayWindow.on('closed', () => { displayWindow = null; });
+}
+
+ipcMain.handle('present:displays', () => {
+  const primaryId = screen.getPrimaryDisplay().id;
+  return screen.getAllDisplays().map((d) => ({
+    id: d.id,
+    label: d.label || `Display ${d.id}`,
+    primary: d.id === primaryId,
+    width: d.size.width,
+    height: d.size.height
+  }));
+});
+ipcMain.handle('present:open', (_e, id, file) => openDisplayWindow(id, file));
+ipcMain.handle('present:close', () => {
+  if (displayWindow && !displayWindow.isDestroyed()) displayWindow.destroy();
+  displayWindow = null;
+});
 
 app.whenReady().then(async () => {
   try {

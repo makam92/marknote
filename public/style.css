@@ -1908,3 +1908,106 @@ mark.find-hit.current { background: var(--accent); color: var(--paper); }
 .note-menu button.danger:hover { background: #c0392b1a; color: #c0392b; }
 .note-menu button.danger.confirming,
 .note-menu button.danger.confirming:hover { background: #c0392b; color: #fff; }
+
+/* ——— presenter mode ——— */
+
+body.display-mode .sidebar { display: none !important; }
+
+.presenter-view {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: #14110c;
+  color: #eae2d3;
+}
+.pres-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #ffffff1c;
+  font-size: 14px;
+}
+.pres-counter { font-family: var(--font-mono); font-size: 13px; opacity: 0.85; }
+.pres-timer {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: #e08a4e;
+}
+.pres-spacer { flex: 1; }
+.pres-display-state { font-size: 11.5px; opacity: 0.55; }
+.pres-head button {
+  border-color: #ffffff33;
+  color: #eae2d3;
+  padding: 4px 14px;
+}
+.pres-head button:hover { border-color: #e08a4e; color: #e08a4e; }
+
+.pres-body {
+  flex: 1;
+  display: flex;
+  gap: 18px;
+  padding: 18px;
+  min-height: 0;
+}
+.pres-main { flex: 2.2; min-width: 0; display: flex; }
+.pres-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pres-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  opacity: 0.55;
+}
+.pres-slide {
+  background: #ffffff;
+  color: #1c1a16;
+  border-radius: 12px;
+  padding: 26px 30px;
+  overflow: auto;
+  scrollbar-width: none;
+}
+.pres-cur { flex: 1; font-size: 15px; }
+.pres-nxt { height: 34%; font-size: 10px; padding: 14px 16px; }
+.pres-slide h1 { font-size: 1.9em; margin-bottom: 0.4em; }
+.pres-slide h2 { font-size: 1.5em; margin-bottom: 0.4em; }
+.pres-slide img, .pres-slide model-viewer { max-width: 100%; }
+.pres-end {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9c968a;
+  font-size: 13px;
+}
+.pres-notes {
+  flex: 1;
+  background: #ffffff10;
+  border: 1px solid #ffffff1c;
+  border-radius: 12px;
+  padding: 16px 18px;
+  font-size: 17px;
+  line-height: 1.55;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.pres-notes.empty { opacity: 0.45; font-style: italic; font-size: 14px; }
+.pres-display-pick {
+  font: inherit;
+  font-size: 12.5px;
+  background: #ffffff10;
+  color: #eae2d3;
+  border: 1px solid #ffffff33;
+  border-radius: 8px;
+  padding: 4px 8px;
+  max-width: 220px;
+}

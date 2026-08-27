@@ -698,6 +698,7 @@ function showNote(note) {
   $('pinBtn').title = note.pinned ? 'Unpin' : 'Pin — keep this note at the top of the list';
   $('noteMenu').hidden = true;
   $('deckBtn').hidden = !isDeckNote(note);
+  $('presenterBtn').hidden = !isDeckNote(note);
   // any note with real content can yield todos — plans and research included
   $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80;
   closeFind();
@@ -2070,7 +2071,20 @@ dcEl().addEventListener('keydown', (e) => {
   }
 });
 
-$('presentBtn').addEventListener('click', openPresentation);
+// Present is screen-aware in the desktop app: with an external display
+// connected it opens presenter mode (deck on the TV, notes here); on a single
+// screen it presents in-app as always. ⋯ → "Presenter mode" forces the
+// presenter flow regardless.
+$('presentBtn').addEventListener('click', async () => {
+  const native = window.marknoteNative;
+  if (native) {
+    try {
+      const displays = await native.displays();
+      if (displays.length > 1) return openPresenterMode();
+    } catch (e) { /* fall through to in-app presenting */ }
+  }
+  openPresentation();
+});
 $('presentClose').addEventListener('click', closePresentation);
 $('musicToggle').addEventListener('click', () => {
   musicPlaying = !musicPlaying;
@@ -3515,4 +3529,175 @@ document.addEventListener('mousedown', (e) => {
     $('noteMenu').hidden = true;
     resetDelete();
   }
+});
+
+/* ——— presenter mode: deck on a second screen, notes on this one ——— */
+// The display window (opened at #display/<file>) runs only the reveal deck;
+// the main window becomes the presenter view: current + next slide, speaker
+// notes (<!-- notes ... --> per slide), timer and controls. The two sync over
+// a BroadcastChannel; in the Electron app the display window is auto-placed
+// fullscreen on the external screen (see main.js).
+
+function slideNotes(chunk) {
+  const m = (chunk || '').match(/<!--\s*notes:?\s*([\s\S]*?)-->/);
+  return m ? m[1].trim() : '';
+}
+
+/* — display window side — */
+
+async function bootDisplayMode() {
+  document.body.classList.add('display-mode');
+  document.title = 'Presentation — Marknote';
+  const file = decodeURIComponent(location.hash.slice('#display/'.length));
+  while (!state.notes.length) await new Promise((r) => setTimeout(r, 100));
+  const note = state.notes.find((n) => n.file === file);
+  if (!note) { document.body.textContent = 'Note not found: ' + file; return; }
+  state.current = note;
+  await openPresentation();
+  const ch = new BroadcastChannel('marknote-present');
+  const report = () => {
+    if (!deck) return;
+    ch.postMessage({ type: 'state', h: deck.getIndices().h, total: deck.getTotalSlides() });
+  };
+  ch.onmessage = (e) => {
+    const m = e.data;
+    if (!deck) return;
+    if (m.type === 'next') deck.next();
+    else if (m.type === 'prev') deck.prev();
+    else if (m.type === 'goto') deck.slide(m.h, 0);
+    else if (m.type === 'hello') report();
+    else if (m.type === 'close') window.close();
+  };
+  deck.on('slidechanged', report);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setTimeout(() => window.close(), 80);
+  });
+  report();
+}
+if (location.hash.startsWith('#display/')) bootDisplayMode();
+
+/* — presenter side — */
+
+let presenterCh = null;
+let displayWin = null;
+let presenterTimer = null;
+let presenterChunks = [];
+let presenterH = 0;
+let presenterFile = null;
+
+async function renderPresenterSlides() {
+  const cur = presenterChunks[presenterH] || '';
+  const next = presenterChunks[presenterH + 1];
+  $('presCounter').textContent = `${presenterH + 1} / ${presenterChunks.length}`;
+  renderMarkdown($('presCurrent'), cur, { staticMermaid: true });
+  $('presCurrent').querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+  await renderMermaidStatic($('presCurrent'));
+  if (next != null) {
+    renderMarkdown($('presNext'), next, { staticMermaid: true });
+    $('presNext').querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+    await renderMermaidStatic($('presNext'));
+  } else {
+    $('presNext').innerHTML = '<div class="pres-end">— end of deck —</div>';
+  }
+  // mirror each slide's colors so the preview matches the big screen
+  for (const [el, chunk] of [[$('presCurrent'), cur], [$('presNext'), next || '']]) {
+    el.style.background = (chunk.match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1] || '';
+    el.style.color = (chunk.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1] || '';
+  }
+  const notes = slideNotes(cur);
+  $('presNotes').textContent = notes || 'No speaker notes for this slide.';
+  $('presNotes').classList.toggle('empty', !notes);
+}
+
+async function openPresenterMode() {
+  const note = state.current;
+  if (!note || displayWin) return;
+  if (state.editing && state.dirty) {
+    const updated = await api.save(note.file, $('editor').value);
+    applySaved(updated);
+  }
+  presenterChunks = splitSlides(expandTransclusions(state.current.body));
+  presenterH = 0;
+  presenterFile = note.file;
+  // In the desktop app the main process creates the display window on a chosen
+  // screen (reliable cross-display fullscreen). In a plain browser we fall
+  // back to window.open — drag it to the screen you want.
+  const native = window.marknoteNative || null;
+  if (native) {
+    const displays = await native.displays();
+    const pick = $('presDisplayPick');
+    pick.innerHTML = displays
+      .map((d) => `<option value="${d.id}">${escapeHtml(d.label)} ${d.width}×${d.height}${d.primary ? ' — this screen' : ''}</option>`)
+      .join('');
+    pick.hidden = displays.length < 2;
+    const target = displays.find((d) => !d.primary) || displays[0];
+    pick.value = String(target.id);
+    await native.openDisplay(target.id, note.file);
+    displayWin = 'native';
+  } else {
+    displayWin = window.open(location.origin + '/#display/' + encodeURIComponent(note.file), 'marknoteDisplay');
+  }
+  $('presenterView').hidden = false;
+  $('presDisplayState').textContent = displayWin ? 'Waiting for display window…' : 'Popup blocked — allow popups and retry';
+  presenterCh = new BroadcastChannel('marknote-present');
+  presenterCh.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'state') {
+      $('presDisplayState').textContent = 'Display connected';
+      if (m.h !== presenterH) {
+        presenterH = m.h;
+        renderPresenterSlides();
+      } else {
+        $('presCounter').textContent = `${presenterH + 1} / ${presenterChunks.length}`;
+      }
+    }
+  };
+  let hellos = 0;
+  const hi = setInterval(() => {
+    if (!presenterCh) return clearInterval(hi);
+    presenterCh.postMessage({ type: 'hello' });
+    if (++hellos > 20) clearInterval(hi);
+  }, 500);
+  const t0 = Date.now();
+  clearInterval(presenterTimer);
+  presenterTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    $('presTimer').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+  $('presTimer').textContent = '0:00';
+  renderPresenterSlides();
+}
+
+function closePresenterMode() {
+  if (presenterCh) {
+    presenterCh.postMessage({ type: 'close' });
+    presenterCh.close();
+    presenterCh = null;
+  }
+  if (window.marknoteNative) window.marknoteNative.closeDisplay();
+  try { if (displayWin && displayWin !== 'native') displayWin.close(); } catch (e) { /* already gone */ }
+  displayWin = null;
+  clearInterval(presenterTimer);
+  $('presenterView').hidden = true;
+}
+
+function presenterSend(type) {
+  if (presenterCh) presenterCh.postMessage({ type });
+}
+
+$('presDisplayPick').addEventListener('change', () => {
+  if (window.marknoteNative && presenterFile) {
+    window.marknoteNative.openDisplay(Number($('presDisplayPick').value), presenterFile);
+    $('presDisplayState').textContent = 'Moving display\u2026';
+  }
+});
+$('presenterBtn').addEventListener('click', openPresenterMode);
+$('presBtnNext').addEventListener('click', () => presenterSend('next'));
+$('presBtnPrev').addEventListener('click', () => presenterSend('prev'));
+$('presClose').addEventListener('click', closePresenterMode);
+document.addEventListener('keydown', (e) => {
+  if ($('presenterView').hidden) return;
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); presenterSend('next'); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); presenterSend('prev'); }
+  else if (e.key === 'Escape') closePresenterMode();
 });
