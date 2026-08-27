@@ -3585,10 +3585,21 @@ let presenterChunks = [];
 let presenterH = 0;
 let presenterFile = null;
 
+
+// "3 · Motorn: Swedbank Pay" — option labels for the jump-to-slide dropdown
+function slideTitle(chunk, i) {
+  const h = (chunk || '').match(/^#{1,4}\s+(.+)$/m);
+  let t = h ? h[1] : ((chunk || '').split('\n').find((l) => l.trim() && !l.trim().startsWith('<!--')) || '');
+  t = t.replace(/[*_`#]/g, '').replace(/<[^>]+>/g, '').trim();
+  if (t.length > 42) t = t.slice(0, 40) + '\u2026';
+  return `${i + 1} \u00b7 ${t || '(slide)'}`;
+}
+
 async function renderPresenterSlides() {
   const cur = presenterChunks[presenterH] || '';
   const next = presenterChunks[presenterH + 1];
   $('presCounter').textContent = `${presenterH + 1} / ${presenterChunks.length}`;
+  if ($('presSlidePick').value !== String(presenterH)) $('presSlidePick').value = String(presenterH);
   renderMarkdown($('presCurrent'), cur, { staticMermaid: true });
   $('presCurrent').querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
   await renderMermaidStatic($('presCurrent'));
@@ -3619,6 +3630,9 @@ async function openPresenterMode() {
   presenterChunks = splitSlides(expandTransclusions(state.current.body));
   presenterH = 0;
   presenterFile = note.file;
+  $('presSlidePick').innerHTML = presenterChunks
+    .map((c, i) => `<option value="${i}">${escapeHtml(slideTitle(c, i))}</option>`)
+    .join('');
   // In the desktop app the main process creates the display window on a chosen
   // screen (reliable cross-display fullscreen). In a plain browser we fall
   // back to window.open — drag it to the screen you want.
@@ -3692,6 +3706,9 @@ $('presDisplayPick').addEventListener('change', () => {
   }
 });
 $('presenterBtn').addEventListener('click', openPresenterMode);
+$('presSlidePick').addEventListener('change', () => {
+  if (presenterCh) presenterCh.postMessage({ type: 'goto', h: Number($('presSlidePick').value) });
+});
 $('presBtnNext').addEventListener('click', () => presenterSend('next'));
 $('presBtnPrev').addEventListener('click', () => presenterSend('prev'));
 $('presClose').addEventListener('click', closePresenterMode);

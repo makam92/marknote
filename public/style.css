@@ -2011,3 +2011,4 @@ body.display-mode .sidebar { display: none !important; }
   padding: 4px 8px;
   max-width: 220px;
 }
+.pres-slide-pick { max-width: 260px; }
