@@ -196,10 +196,21 @@ function embedVideos(el) {
     const vimeo = href.match(/^https?:\/\/(?:www\.)?vimeo\.com\/(\d+)/);
     const isFile = /\.(mp4|webm|mov|m4v)([?#]|$)/i.test(href);
     const isAudio = /\.(weba|mp3|m4a|wav|ogg)([?#]|$)/i.test(href);
-    if (!yt && !vimeo && !isFile && !isAudio) return;
+    const isModel = /\.(glb|gltf)([?#]|$)/i.test(href);
+    if (!yt && !vimeo && !isFile && !isAudio && !isModel) return;
 
     let embed;
-    if (isAudio) {
+    if (isModel) {
+      embed = document.createElement('model-viewer');
+      embed.className = 'model-embed';
+      embed.setAttribute('src', href);
+      embed.setAttribute('camera-controls', '');
+      embed.setAttribute('auto-rotate', '');
+      embed.setAttribute('shadow-intensity', '1');
+      // lazy-load heuristics misfire inside reveal's transformed slides
+      embed.setAttribute('loading', 'eager');
+      embed.setAttribute('alt', a.textContent || '3D-modell');
+    } else if (isAudio) {
       embed = document.createElement('span');
       embed.className = 'audio-embed';
       const audio = document.createElement('audio');
@@ -678,11 +689,14 @@ function showNote(note) {
   $('noteView').hidden = false;
   $('trashView').hidden = true;
   $('meetingView').hidden = true;
+  $('todoView').hidden = true;
   $('renameWrap').hidden = true;
   $('editorWrap').hidden = true;
   $('rendered').hidden = false;
   $('pinBtn').textContent = note.pinned ? 'Unpin' : 'Pin';
   $('deckBtn').hidden = !isDeckNote(note);
+  // any note with real content can yield todos — plans and research included
+  $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80;
   closeFind();
   renderBacklinks(note);
   $('editBtn').textContent = 'Edit';
@@ -2091,6 +2105,7 @@ function openMeetingView() {
   $('empty').hidden = true;
   $('noteView').hidden = true;
   $('trashView').hidden = true;
+  $('todoView').hidden = true;
   $('meetingView').hidden = false;
   closeFind();
   document.title = 'Meeting — Marknote';
@@ -2612,9 +2627,11 @@ document.addEventListener('mousedown', (e) => {
 /* ——— paste / drop attachments into the editor ——— */
 
 async function insertAttachment(box, blob, nameHint) {
-  const { file } = await api.upload(blob, nameHint);
-  const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(file);
-  const md = isImage ? `![](@attachment/${file})` : `[${file}](@attachment/${file})`;
+  const { file, model } = await api.upload(blob, nameHint);
+  // A converted .blend embeds its .glb; the source .blend stays alongside.
+  const embedFile = model || file;
+  const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(embedFile);
+  const md = isImage ? `![](@attachment/${embedFile})` : `[${embedFile}](@attachment/${embedFile})`;
   box.focus();
   document.execCommand('insertText', false, md + '\n');
   if (box === ed) {
@@ -2654,6 +2671,19 @@ function wireAttachmentInput(box) {
 
 wireAttachmentInput(ed);
 wireAttachmentInput($('deckCode'));
+
+// Toolbar "3D" button: pick model files, upload, insert as viewer links.
+// .blend files are converted server-side; insertAttachment embeds the .glb.
+const model3dFile = document.createElement('input');
+model3dFile.type = 'file';
+model3dFile.accept = '.glb,.gltf,.blend';
+model3dFile.multiple = true;
+$('model3dBtn').addEventListener('click', () => model3dFile.click());
+model3dFile.addEventListener('change', async () => {
+  const files = [...model3dFile.files];
+  model3dFile.value = '';
+  for (const f of files) await insertAttachment(tbb(), f, f.name);
+});
 
 /* ——— quick-open (⌘P) ——— */
 
@@ -2970,6 +3000,7 @@ async function openTrash() {
   $('empty').hidden = true;
   $('noteView').hidden = true;
   $('meetingView').hidden = true;
+  $('todoView').hidden = true;
   $('trashView').hidden = false;
   closeFind();
   document.title = 'Trash — Marknote';
@@ -3091,6 +3122,28 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 // React to hash changes from outside the app (back/forward, pasted #note/ links).
+// Notes created outside the app (agents, scripts, other editors) appear
+// when the window regains focus — no manual reload needed.
+window.addEventListener('focus', async () => {
+  try {
+    state.notes = await api.list();
+    renderTags();
+    renderList();
+    refreshTrashCount();
+    // Refresh the open note's rendered view if it changed on disk,
+    // but never while the user is editing it.
+    if (state.current && !state.editing && !deckEd.open) {
+      const fresh = state.notes.find((n) => n.file === state.current.file);
+      if (fresh && fresh.modified !== state.current.modified) {
+        state.current = fresh;
+        renderMarkdown($('rendered'), fresh.body);
+        renderBacklinks(fresh);
+        $('noteDate').textContent = formatDate(fresh.modified);
+      }
+    }
+  } catch (e) { /* server briefly unavailable */ }
+});
+
 window.addEventListener('hashchange', () => {
   const hash = decodeURIComponent(location.hash);
   if (!hash.startsWith('#note/')) return;
@@ -3132,3 +3185,314 @@ $('themeToggle').addEventListener('click', () => {
     }
   } catch (e) { /* recovery is best-effort */ }
 })();
+
+/* ——— todos ——— */
+// Todos are plain task-list lines in notes/Todos.md, so they stay an editable
+// note and survive in git. Tokens: @YYYY-MM-DD due date, !HH:MM reminder time
+// (the server fires a macOS notification), trailing [[Note]] = source link.
+
+const TODOS_FILE = 'Todos.md';
+let todoRaw = null;
+
+async function loadTodos() {
+  try { todoRaw = await api.raw(TODOS_FILE); } catch { todoRaw = null; }
+}
+
+async function ensureTodosNote() {
+  if (state.notes.find((n) => n.file === TODOS_FILE)) return;
+  const iso = new Date().toISOString();
+  await api.save(TODOS_FILE, `---\ntags: [Todos]\ntitle: 'Todos'\ncreated: '${iso}'\nmodified: '${iso}'\n---\n\n# Todos\n`);
+  state.notes = await api.list();
+  renderTags();
+  renderList();
+}
+
+function parseTodos(text) {
+  const items = [];
+  (text || '').split('\n').forEach((line, idx) => {
+    const m = line.match(/^- \[( |x)\] (.*)$/);
+    if (!m) return;
+    const t = { idx, done: m[1] === 'x', date: null, time: null, link: null };
+    const dm = m[2].match(/@(\d{4}-\d{2}-\d{2})/);
+    if (dm) t.date = dm[1];
+    const tm = m[2].match(/!(\d{1,2}:\d{2})/);
+    if (tm) t.time = tm[1];
+    const lm = m[2].match(/\[\[([^\]\n]+)\]\]/);
+    if (lm) t.link = lm[1];
+    t.label = m[2]
+      .replace(/@\d{4}-\d{2}-\d{2}/, '').replace(/!\d{1,2}:\d{2}/, '')
+      .replace(/\[\[[^\]\n]+\]\]/, '').replace(/\s+/g, ' ').trim();
+    items.push(t);
+  });
+  return items;
+}
+
+function todayStr(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function updateTodoCount() {
+  const n = state.notes.find((x) => x.file === TODOS_FILE);
+  const open = n ? parseTodos(n.body).filter((t) => !t.done).length : 0;
+  $('todoCount').textContent = open ? `(${open})` : '';
+}
+
+function renderTodos() {
+  const items = parseTodos(todoRaw);
+  const today = todayStr();
+  const tomorrow = todayStr(1);
+  const dow = (new Date().getDay() + 6) % 7; // Monday = 0
+  const weekEnd = todayStr(6 - dow);
+  const groups = { Overdue: [], Today: [], Tomorrow: [], 'This week': [], Later: [], 'No date': [], Done: [] };
+  for (const t of items) {
+    if (t.done) groups.Done.push(t);
+    else if (!t.date) groups['No date'].push(t);
+    else if (t.date < today) groups.Overdue.push(t);
+    else if (t.date === today) groups.Today.push(t);
+    else if (t.date === tomorrow) groups.Tomorrow.push(t);
+    else if (t.date <= weekEnd) groups['This week'].push(t);
+    else groups.Later.push(t);
+  }
+  $('todoGroups').innerHTML = Object.entries(groups)
+    .filter(([, list]) => list.length)
+    .map(([name, list]) => {
+      const rows = list
+        .map((t) => {
+          const src = t.link
+            ? `<a class="todo-src" href="#note/${encodeURIComponent((resolveNote(t.link) || { file: t.link + '.md' }).file)}">↳ ${escapeHtml(t.link)}</a>`
+            : '';
+          return `<div class="todo-item${t.done ? ' is-done' : ''}${name === 'Overdue' ? ' is-overdue' : ''}">
+            <input type="checkbox" ${t.done ? 'checked' : ''} data-toggle="${t.idx}" title="${t.done ? 'Reopen' : 'Mark done'}">
+            <span class="todo-label">${escapeHtml(t.label)}</span>
+            ${t.date ? `<span class="todo-chip chip-date">📅 ${t.date === today ? 'today' : t.date === tomorrow ? 'tomorrow' : t.date}</span>` : ''}
+            ${t.time ? `<span class="todo-chip chip-bell">🔔 ${t.time}</span>` : ''}
+            ${src}
+            <button class="todo-del" data-del="${t.idx}" title="Remove todo">×</button>
+          </div>`;
+        })
+        .join('');
+      return `<details class="todo-group${name === 'Overdue' ? ' g-overdue' : ''}"${name === 'Done' ? '' : ' open'}>
+        <summary>${name} <span class="todo-gcount">${list.length}</span></summary>
+        <div class="todo-rows">${rows}</div></details>`;
+    })
+    .join('') || '<div class="todo-empty"><div class="todo-empty-mark">❦</div>All clear — nothing to do.</div>';
+  updateTodoCount();
+}
+
+async function openTodoView() {
+  $('empty').hidden = true;
+  $('noteView').hidden = true;
+  $('meetingView').hidden = true;
+  $('trashView').hidden = true;
+  $('todoView').hidden = false;
+  closeFind();
+  document.title = 'Todos — Marknote';
+  history.replaceState(null, '', '#todos');
+  await loadTodos();
+  renderTodos();
+  $('todoText').focus();
+}
+
+$('todosBtn').addEventListener('click', openTodoView);
+$('todoClose').addEventListener('click', () => {
+  $('todoView').hidden = true;
+  if (state.current) {
+    $('noteView').hidden = false;
+    document.title = state.current.title + ' — Marknote';
+    history.replaceState(null, '', '#note/' + encodeURIComponent(state.current.file));
+  } else {
+    $('empty').hidden = false;
+    document.title = 'Marknote';
+    history.replaceState(null, '', '#');
+  }
+});
+
+async function appendTodos(entries) {
+  await ensureTodosNote();
+  await loadTodos();
+  const lines = (todoRaw ?? '').split('\n');
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  lines.push(...entries, '');
+  const updated = await api.save(TODOS_FILE, lines.join('\n'));
+  const i = state.notes.findIndex((n) => n.file === TODOS_FILE);
+  if (i !== -1) state.notes[i] = updated;
+  await loadTodos();
+  updateTodoCount();
+}
+
+async function submitTodoForm() {
+  const label = $('todoText').value.trim();
+  if (!label) return;
+  let date = $('todoDate').value;
+  const time = $('todoTime').value;
+  if (time && !date) date = todayStr(); // a bare reminder time means today
+  let entry = `- [ ] ${label}`;
+  if (date) entry += ` @${date}`;
+  if (time) entry += ` !${time}`;
+  $('todoText').value = '';
+  $('todoDate').value = '';
+  $('todoTime').value = '';
+  tcSyncPills();
+  await appendTodos([entry]);
+  renderTodos();
+  $('todoText').focus();
+}
+
+$('todoAdd').addEventListener('click', submitTodoForm);
+$('todoText').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitTodoForm();
+});
+
+$('todoGroups').addEventListener('click', async (e) => {
+  const toggle = e.target.closest('[data-toggle]');
+  const del = e.target.closest('[data-del]');
+  if (!toggle && !del) return;
+  await loadTodos();
+  const lines = (todoRaw ?? '').split('\n');
+  const idx = Number(toggle ? toggle.dataset.toggle : del.dataset.del);
+  if (!/^- \[( |x)\] /.test(lines[idx] || '')) { renderTodos(); return; } // file changed underneath
+  if (toggle) {
+    lines[idx] = lines[idx].startsWith('- [ ]')
+      ? lines[idx].replace('- [ ]', '- [x]')
+      : lines[idx].replace('- [x]', '- [ ]');
+  } else {
+    lines.splice(idx, 1);
+  }
+  const updated = await api.save(TODOS_FILE, lines.join('\n'));
+  const i = state.notes.findIndex((n) => n.file === TODOS_FILE);
+  if (i !== -1) state.notes[i] = updated;
+  await loadTodos();
+  renderTodos();
+});
+
+/* suggest todos from a meeting note via the claude CLI */
+
+let tsSuggestions = [];
+
+$('todoSuggestBtn').addEventListener('click', async () => {
+  const note = state.current;
+  if (!note) return;
+  $('todoSuggestModal').hidden = false;
+  $('tsAdd').disabled = true;
+  $('tsList').innerHTML = '<p class="ts-loading">Asking Claude to read the note…</p>';
+  try {
+    const res = await fetch('/api/todo-suggest', {
+      method: 'POST',
+      body: JSON.stringify({ text: note.body, title: note.title })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'request failed');
+    tsSuggestions = data.suggestions || [];
+    if (!tsSuggestions.length) {
+      $('tsList').innerHTML = '<p class="ts-loading">No action items found in this note.</p>';
+      return;
+    }
+    $('tsList').innerHTML = tsSuggestions
+      .map((s, i) => `<label class="ts-item"><input type="checkbox" checked data-ts="${i}"><span>${escapeHtml(s)}</span></label>`)
+      .join('');
+    $('tsAdd').disabled = false;
+  } catch (err) {
+    $('tsList').innerHTML = `<p class="ts-loading">Could not get suggestions: ${escapeHtml(String(err.message || err))}</p>`;
+  }
+});
+
+$('tsCancel').addEventListener('click', () => { $('todoSuggestModal').hidden = true; });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('todoSuggestModal').hidden) $('todoSuggestModal').hidden = true;
+});
+
+$('tsAdd').addEventListener('click', async () => {
+  const picked = [...$('tsList').querySelectorAll('input:checked')].map((el) => tsSuggestions[Number(el.dataset.ts)]);
+  $('todoSuggestModal').hidden = true;
+  if (!picked.length) return;
+  const src = state.current ? state.current.title : null;
+  await appendTodos(picked.map((p) => `- [ ] ${p.replace(/\n/g, ' ')}` + (src ? ` [[${src}]]` : '')));
+  alertBar(`Added ${picked.length} todo${picked.length === 1 ? '' : 's'} — see ☑ Todos`);
+});
+
+// keep the sidebar count fresh; #todos deep-link restores the page on reload
+setInterval(updateTodoCount, 30 * 1000);
+setTimeout(updateTodoCount, 1500);
+if (decodeURIComponent(location.hash) === '#todos') openTodoView();
+
+/* composer popovers: 📅 due date and 🔔 reminder, shown as removable pills */
+
+function tcSyncPills() {
+  const date = $('todoDate').value;
+  const time = $('todoTime').value;
+  $('todoDatePill').hidden = !date;
+  if (date) {
+    $('todoDatePill').querySelector('.tc-pill-txt').textContent =
+      '📅 ' + (date === todayStr() ? 'today' : date === todayStr(1) ? 'tomorrow' : date);
+  }
+  $('todoTimePill').hidden = !time;
+  if (time) $('todoTimePill').querySelector('.tc-pill-txt').textContent = '🔔 ' + time;
+  $('todoDateBtn').classList.toggle('active', !!date);
+  $('todoBellBtn').classList.toggle('active', !!time);
+}
+
+function tcClosePops() {
+  $('todoDatePop').hidden = true;
+  $('todoBellPop').hidden = true;
+}
+
+$('todoDateBtn').addEventListener('click', () => {
+  const was = $('todoDatePop').hidden;
+  tcClosePops();
+  $('todoDatePop').hidden = !was;
+});
+$('todoBellBtn').addEventListener('click', () => {
+  const was = $('todoBellPop').hidden;
+  tcClosePops();
+  $('todoBellPop').hidden = !was;
+});
+$('todoDate').addEventListener('change', tcSyncPills);
+$('todoTime').addEventListener('change', tcSyncPills);
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.tc-pop, #todoDateBtn, #todoBellBtn')) tcClosePops();
+});
+document.querySelectorAll('#todoDatePop .tc-chip').forEach((b) =>
+  b.addEventListener('click', () => {
+    $('todoDate').value = todayStr(Number(b.dataset.day));
+    tcClosePops();
+    tcSyncPills();
+    $('todoText').focus();
+  })
+);
+document.querySelectorAll('#todoBellPop .tc-chip').forEach((b) =>
+  b.addEventListener('click', () => {
+    $('todoTime').value = b.dataset.clock;
+    tcClosePops();
+    tcSyncPills();
+    $('todoText').focus();
+  })
+);
+document.querySelectorAll('.tc-pill-x').forEach((b) =>
+  b.addEventListener('click', () => {
+    if (b.dataset.clear === 'date') $('todoDate').value = '';
+    else $('todoTime').value = '';
+    tcSyncPills();
+    $('todoText').focus();
+  })
+);
+
+// Keep the open todos page in sync with the file underneath it — the reminder
+// dialog's "Klart ✓" marks todos done server-side, and agents/other windows
+// can edit Todos.md too. Cheap: refetch only while the view is visible,
+// re-render only when the content actually changed.
+async function refreshTodosIfOpen() {
+  if ($('todoView').hidden) return;
+  const before = todoRaw;
+  await loadTodos();
+  if (todoRaw !== before) {
+    renderTodos();
+    state.notes = await api.list();
+    renderList();
+    updateTodoCount();
+  }
+}
+setInterval(refreshTodosIfOpen, 5000);
+window.addEventListener('focus', refreshTodosIfOpen);

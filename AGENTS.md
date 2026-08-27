@@ -51,6 +51,9 @@ Body markdown…
   image nodes: `A@{ img: "@attachment/x.png", w: 120, h: 80 }`.
 - Audio attachment links (`.weba/.mp3/.m4a/.wav/.ogg`) render as players; video files
   as `<video>`; a YouTube/Vimeo URL **alone on its own line** becomes an embedded player.
+- 3D models: a standalone link to a `.glb`/`.gltf` attachment renders as an interactive
+  viewer (orbit/auto-rotate), in notes and on slides. Uploading a `.blend` converts it
+  to `.glb` automatically when Blender is installed (source file is kept).
 - Avoid spaces/parens in new attachment filenames (uploads are sanitized to dashes).
 - Colored text: inline HTML `<span style="color:#2b6cb0">text</span>` — renders in
   notes, slides and previews (GitHub's web view strips inline styles, though).
@@ -134,6 +137,25 @@ title: 'Meeting 2026-08-26 14:00'
 
 The transcribe button only shows while the note lacks `## Transcript`.
 
+## Todos
+
+`notes/Todos.md` holds the todo list as ordinary task-list lines; the app's
+"☑ Todos" page (sidebar) renders them grouped by date. Line format:
+
+```markdown
+- [ ] Call Swedbank Pay about fas 0 @2026-08-27 !09:30 [[Some source note]]
+```
+
+- `@YYYY-MM-DD` — due date (groups: Overdue/Today/Tomorrow/This week/Later)
+- `!HH:MM` — reminder: the server fires a macOS notification at that local time
+  on the due date (only while the app runs; fired ones are recorded in
+  `.todo-reminders.json` and never repeat; reminders >2h stale are swallowed)
+- trailing `[[Note]]` — source-note link shown on the todo
+- `- [x]` — done
+
+Agents may append todo lines directly to the file. The note is created on first
+use with the `Todos` tag; a `!time` without a date means today.
+
 ## HTTP API (base `http://localhost:4747`)
 
 | Method & path | Body | Returns |
@@ -148,6 +170,7 @@ The transcribe button only shows while the note lacks `## Transcript`.
 | GET `/api/trash` · POST `/api/trash/restore` / `/api/trash/delete` | `{"file"}` | trash management |
 | POST `/api/transcribe` | `{"file"}` (attachment) | whisper.cpp transcript, speaker-labelled |
 | POST `/api/summarize` | `{"text","title"}` | meeting summary via local `claude` CLI |
+| POST `/api/todo-suggest` | `{"text","title"}` | action items as `{suggestions:[…]}` via local `claude` CLI |
 
 URL-encode filenames in paths. `<file>` is always a basename ending in `.md`.
 

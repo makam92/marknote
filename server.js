@@ -38,7 +38,9 @@ const MIME = {
   '.m4a': 'audio/mp4',
   '.wav': 'audio/wav',
   '.weba': 'audio/webm',
-  '.ogg': 'audio/ogg'
+  '.ogg': 'audio/ogg',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json'
 };
 
 // GUI apps get a minimal PATH — resolve helper binaries by absolute path.
@@ -54,6 +56,7 @@ function findBin(candidates) {
 
 const WHISPER_BIN = findBin(['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli']);
 const FFMPEG_BIN = findBin(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
+const BLENDER_BIN = findBin(['/Applications/Blender.app/Contents/MacOS/Blender', '/opt/homebrew/bin/blender']);
 const WHISPER_MODEL = path.join(ROOT, 'models', 'ggml-small.bin');
 const CLAUDE_BIN = findBin([
   path.join(os.homedir(), '.local/bin/claude'),
@@ -398,6 +401,28 @@ const server = http.createServer(async (req, res) => {
         final = dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`;
       }
       await fsp.writeFile(path.join(ATTACH_DIR, final), buf);
+      // A .blend can't render in the browser — if Blender is installed,
+      // convert it headlessly to .glb for the interactive 3D viewer.
+      if (final.endsWith('.blend') && BLENDER_BIN) {
+        const glbName = final.replace(/\.blend$/, '.glb');
+        const glbPath = path.join(ATTACH_DIR, glbName);
+        try {
+          await new Promise((resolve, reject) => {
+            execFile(
+              BLENDER_BIN,
+              ['-b', path.join(ATTACH_DIR, final), '--python-expr',
+               `import bpy; bpy.ops.export_scene.gltf(filepath=r'''${glbPath}''')`],
+              { timeout: 180 * 1000, maxBuffer: 16 * 1024 * 1024 },
+              (err) => (err ? reject(err) : resolve())
+            );
+          });
+          if (await fileExists(glbPath)) {
+            return send(res, 201, { file: final, model: glbName });
+          }
+        } catch (err) {
+          console.error('blend conversion failed:', err.message);
+        }
+      }
       return send(res, 201, { file: final });
     }
 
@@ -506,6 +531,43 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // Extract suggested todos from a meeting note (or any text) via the claude CLI.
+    if (pathname === '/api/todo-suggest' && req.method === 'POST') {
+      if (!CLAUDE_BIN) return send(res, 503, { error: 'claude CLI not found' });
+      const { text, title } = JSON.parse(await readBody(req) || '{}');
+      if (!text || !text.trim()) return send(res, 400, { error: 'empty text' });
+      const prompt =
+        'Below is a note' + (title ? ` ("${title}")` : '') + ' — it may be meeting notes, a transcript, ' +
+        'a plan, or general writing. Extract the concrete action items / next steps as a JSON array of short ' +
+        'imperative todo strings, in the same language the source is written in. Only real tasks someone could ' +
+        'check off — no topics, no facts, no decisions that need no follow-up. At most 10 items. ' +
+        'Output ONLY the JSON array, nothing else. No items → output [].';
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const child = execFile(
+            CLAUDE_BIN,
+            ['-p', prompt],
+            { timeout: 300 * 1000, maxBuffer: 16 * 1024 * 1024, cwd: os.tmpdir() },
+            (err, stdout) => (err ? reject(err) : resolve(stdout))
+          );
+          child.stdin.write(text.slice(0, 200 * 1024));
+          child.stdin.end();
+        });
+        const s = out.indexOf('[');
+        const e = out.lastIndexOf(']');
+        let suggestions = [];
+        if (s !== -1 && e > s) {
+          try {
+            suggestions = JSON.parse(out.slice(s, e + 1)).filter((x) => typeof x === 'string' && x.trim());
+          } catch { /* fall through to empty */ }
+        }
+        return send(res, 200, { suggestions: suggestions.slice(0, 10) });
+      } catch (err) {
+        console.error('todo-suggest:', err.message);
+        return send(res, 500, { error: 'suggest failed: ' + String(err.message).slice(0, 200) });
+      }
+    }
+
     if (pathname === '/api/trash' && req.method === 'GET') {
       await fsp.mkdir(TRASH_DIR, { recursive: true });
       const items = (await fsp.readdir(TRASH_DIR))
@@ -610,11 +672,70 @@ const recoveredFiles = [];
   } catch { /* attachments dir missing on first run */ }
 })();
 
+// ——— todo reminders ———
+// Todos live in notes/Todos.md as task-list lines:  - [ ] Text @2026-08-27 !09:30
+// A line with both a date and a !time gets a macOS notification at that moment
+// (while the app is running). Fired reminders are recorded in .todo-reminders.json
+// so they never fire twice; reminders more than 2h stale are swallowed silently.
+const REMIND_STATE = path.join(ROOT, '.todo-reminders.json');
+let remindState = {};
+try { remindState = JSON.parse(fs.readFileSync(REMIND_STATE, 'utf8')); } catch { /* first run */ }
+
+// Script-delivered notification-center banners are easily silenced by per-app
+// Notification settings (no banner, no sound — they pile up unseen). A dialog
+// window + a directly-played chime depend on no settings at all. The dialog's
+// "Klart ✓" button marks the todo done right from the reminder.
+function notify(text, line) {
+  if (process.platform !== 'darwin') return;
+  const safe = String(text).replace(/[\\"]/g, '').slice(0, 200);
+  execFile('/usr/bin/afplay', ['/System/Library/Sounds/Glass.aiff'], () => {});
+  execFile('/usr/bin/osascript', ['-e',
+    `display dialog "${safe}" with title "Marknote — todo reminder" buttons {"Klart ✓", "OK"} default button "OK" with icon note giving up after 600`
+  ], async (err, stdout) => {
+    if (err || !line || !/button returned:Klart/.test(stdout || '')) return;
+    try {
+      const p = path.join(NOTES_DIR, 'Todos.md');
+      const raw = await fsp.readFile(p, 'utf8');
+      if (!raw.includes(line)) return; // todo edited meanwhile — leave it alone
+      const done = raw.replace(line, line.replace('- [ ]', '- [x]'));
+      await fsp.writeFile(p, touchModified(done, new Date().toISOString()));
+    } catch { /* best-effort */ }
+  });
+}
+
+async function scanReminders() {
+  let raw;
+  try { raw = await fsp.readFile(path.join(NOTES_DIR, 'Todos.md'), 'utf8'); } catch { return; }
+  const now = new Date();
+  let changed = false;
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^- \[ \] (.*)$/);
+    if (!m) continue;
+    const dm = m[1].match(/@(\d{4}-\d{2}-\d{2})/);
+    const tm = m[1].match(/!(\d{1,2}):(\d{2})/);
+    if (!dm || !tm) continue;
+    // no timezone suffix → parsed as local time, which is what the user meant
+    const when = new Date(`${dm[1]}T${tm[1].padStart(2, '0')}:${tm[2]}:00`);
+    if (isNaN(when) || when > now) continue;
+    const text = m[1]
+      .replace(/@\d{4}-\d{2}-\d{2}/, '').replace(/!\d{1,2}:\d{2}/, '')
+      .replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/\s+/g, ' ').trim();
+    const key = `${dm[1]} ${tm[0]} ${text}`;
+    if (remindState[key]) continue;
+    remindState[key] = now.toISOString();
+    changed = true;
+    if (now - when < 2 * 3600 * 1000) notify('Remember: ' + text, line);
+  }
+  if (changed) fsp.writeFile(REMIND_STATE, JSON.stringify(remindState, null, 1)).catch(() => {});
+}
+
 function start() {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(PORT, '127.0.0.1', () => {
       console.log(`Notes running at http://localhost:${PORT}`);
+      setInterval(scanReminders, 30 * 1000);
+      scanReminders();
       resolve(PORT);
     });
   });

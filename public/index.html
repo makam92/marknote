@@ -50,6 +50,8 @@
     </div>
   </div>
 
+  <button id="todosBtn" class="todos-btn" title="Todos — tasks with dates and reminders">☑ Todos <span id="todoCount"></span></button>
+
   <div class="labels-section">
     <button id="labelsHead" class="labels-head" title="Show/hide labels">
       <span>Labels</span>
@@ -77,6 +79,7 @@
       </div>
       <div class="note-actions">
         <span id="saveState" class="save-state" aria-live="polite"></span>
+        <button id="todoSuggestBtn" title="Let Claude suggest todos from this note's transcript/summary" hidden>Suggest todos</button>
         <button id="deckBtn" title="Open the deck editor" hidden>Edit deck</button>
         <button id="presentBtn" title="Present this note as slides — split on --- lines">Present</button>
         <button id="pinBtn" title="Keep this note at the top of the list">Pin</button>
@@ -119,6 +122,7 @@
           <button data-md="notelink" title="Link to another note — type [[ anywhere to search">[[&hairsp;Note&hairsp;]]</button>
           <button data-md="table" title="Table">Table</button>
           <button data-md="image" title="Image (attachment)">Img</button>
+          <button id="model3dBtn" title="3D model — pick a .glb/.gltf/.blend file">3D</button>
           <button id="emojiBtn" title="Insert emoji">😊</button>
           <button id="colorBtn" title="Text color"><span class="color-a">A</span></button>
         </span>
@@ -155,6 +159,44 @@
     </header>
     <p class="trash-note">Deleted notes are kept here on disk — restore them or remove them for good.</p>
     <div id="trashList"></div>
+  </section>
+
+  <section id="todoView" class="todo-view" hidden>
+    <header class="todo-head">
+      <h2>Todos</h2>
+      <button id="todoClose" title="Back to notes">Close</button>
+    </header>
+    <div class="todo-composer">
+      <div class="tc-row">
+        <input id="todoText" type="text" placeholder="Add a todo…" autocomplete="off" spellcheck="false">
+        <span id="todoDatePill" class="tc-pill" hidden><span class="tc-pill-txt"></span><button class="tc-pill-x" data-clear="date" title="Remove due date">×</button></span>
+        <span id="todoTimePill" class="tc-pill" hidden><span class="tc-pill-txt"></span><button class="tc-pill-x" data-clear="time" title="Remove reminder">×</button></span>
+        <button id="todoDateBtn" class="tc-icon" title="Due date">📅</button>
+        <button id="todoBellBtn" class="tc-icon" title="Reminder — get a notification">🔔</button>
+        <button id="todoAdd" class="btn-accent tc-add">Add</button>
+      </div>
+      <div id="todoDatePop" class="tc-pop" hidden>
+        <div class="tc-pop-title">Due date</div>
+        <div class="tc-chips">
+          <button class="tc-chip" data-day="0">Today</button>
+          <button class="tc-chip" data-day="1">Tomorrow</button>
+          <button class="tc-chip" data-day="7">Next week</button>
+        </div>
+        <input id="todoDate" type="date">
+      </div>
+      <div id="todoBellPop" class="tc-pop" hidden>
+        <div class="tc-pop-title">Remind me at</div>
+        <div class="tc-chips">
+          <button class="tc-chip" data-clock="09:00">09:00</button>
+          <button class="tc-chip" data-clock="12:00">12:00</button>
+          <button class="tc-chip" data-clock="15:00">15:00</button>
+        </div>
+        <input id="todoTime" type="time">
+        <div class="tc-pop-hint">A notification fires at this time on the due date (today if none is set), while Marknote is running.</div>
+      </div>
+    </div>
+    <div id="todoGroups"></div>
+    <p class="todo-hint">Todos live in the note <a href="#note/Todos.md">Todos</a> as a normal task list — a due date is <code>@2026-08-27</code>, a reminder is <code>!09:30</code>.</p>
   </section>
 
   <section id="meetingView" class="meeting-view" hidden>
@@ -266,6 +308,18 @@
   </div>
 </div>
 
+<div id="todoSuggestModal" class="ts-modal" hidden>
+  <div class="ts-box">
+    <header class="ts-head">
+      <strong>Suggested todos</strong>
+      <span class="ts-spacer"></span>
+      <button id="tsCancel">Cancel</button>
+      <button id="tsAdd" class="btn-accent" disabled>Add selected</button>
+    </header>
+    <div id="tsList" class="ts-list"><p class="ts-loading">Asking Claude to read the note…</p></div>
+  </div>
+</div>
+
 <div id="mmModal" class="mm-modal" hidden>
   <div class="mm-box">
     <header class="mm-head">
@@ -309,6 +363,7 @@
 <script src="/vendor/mermaid.min.js"></script>
 <script src="/vendor/fix-webm-duration.js"></script>
 <script src="/vendor/reveal.js"></script>
+<script type="module" src="/vendor/model-viewer.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
