@@ -79,13 +79,18 @@
       </div>
       <div class="note-actions">
         <span id="saveState" class="save-state" aria-live="polite"></span>
-        <button id="todoSuggestBtn" title="Let Claude suggest todos from this note's transcript/summary" hidden>Suggest todos</button>
         <button id="deckBtn" title="Open the deck editor" hidden>Edit deck</button>
         <button id="presentBtn" title="Present this note as slides — split on --- lines">Present</button>
-        <button id="pinBtn" title="Keep this note at the top of the list">Pin</button>
-        <button id="renameBtn" title="Rename note (updates links from other notes)">Rename</button>
+        <button id="pinBtn" class="pin-btn" title="Pin — keep this note at the top of the list">★</button>
         <button id="editBtn" title="Edit (⌘E)">Edit</button>
-        <button id="deleteBtn" class="danger" title="Move note to trash">Delete</button>
+        <span class="note-menu-wrap">
+          <button id="noteMenuBtn" class="menu-btn" title="More actions">⋯</button>
+          <div id="noteMenu" class="create-menu note-menu" hidden>
+            <button id="todoSuggestBtn" title="Let Claude suggest todos from this note" hidden>Suggest todos</button>
+            <button id="renameBtn" title="Rename note (updates links from other notes)">Rename</button>
+            <button id="deleteBtn" class="danger" title="Move note to trash">Delete</button>
+          </div>
+        </span>
       </div>
     </header>
     <div id="renameWrap" class="rename-wrap" hidden>

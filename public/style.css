@@ -1877,3 +1877,34 @@ mark.find-hit.current { background: var(--accent); color: var(--paper); }
 }
 .ts-item input { margin-top: 3px; }
 .ts-loading { color: var(--ink-faint); font-size: 14px; padding: 14px 0; }
+
+/* ——— note header: pin icon + ⋯ menu ——— */
+
+.pin-btn {
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 10px;
+  color: var(--ink-faint);
+}
+.pin-btn:hover { color: var(--accent); border-color: var(--accent); }
+.pin-btn.pinned {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.menu-btn {
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 4px 10px;
+}
+
+.note-menu-wrap { position: relative; display: inline-flex; }
+.note-menu {
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 175px;
+}
+.note-menu button.danger:hover { background: #c0392b1a; color: #c0392b; }
+.note-menu button.danger.confirming,
+.note-menu button.danger.confirming:hover { background: #c0392b; color: #fff; }

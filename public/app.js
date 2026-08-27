@@ -471,7 +471,8 @@ async function togglePin() {
   const raw = await api.raw(state.current.file);
   const updated = await api.save(state.current.file, setPinnedInRaw(raw, !state.current.pinned));
   applySaved(updated);
-  $('pinBtn').textContent = updated.pinned ? 'Unpin' : 'Pin';
+  $('pinBtn').classList.toggle('pinned', !!updated.pinned);
+  $('pinBtn').title = updated.pinned ? 'Unpin' : 'Pin — keep this note at the top of the list';
   $('noteDate').textContent = formatDate(updated.modified);
 }
 
@@ -693,7 +694,9 @@ function showNote(note) {
   $('renameWrap').hidden = true;
   $('editorWrap').hidden = true;
   $('rendered').hidden = false;
-  $('pinBtn').textContent = note.pinned ? 'Unpin' : 'Pin';
+  $('pinBtn').classList.toggle('pinned', !!note.pinned);
+  $('pinBtn').title = note.pinned ? 'Unpin' : 'Pin — keep this note at the top of the list';
+  $('noteMenu').hidden = true;
   $('deckBtn').hidden = !isDeckNote(note);
   // any note with real content can yield todos — plans and research included
   $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80;
@@ -3496,3 +3499,20 @@ async function refreshTodosIfOpen() {
 }
 setInterval(refreshTodosIfOpen, 5000);
 window.addEventListener('focus', refreshTodosIfOpen);
+
+/* ——— note ⋯ menu ——— */
+// Rare actions live behind the ⋯ button. Delete keeps its two-click confirm:
+// the arming click leaves the menu open so "Really delete?" stays visible.
+$('noteMenuBtn').addEventListener('click', () => {
+  $('noteMenu').hidden = !$('noteMenu').hidden;
+});
+$('noteMenu').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b && b.id !== 'deleteBtn') $('noteMenu').hidden = true;
+});
+document.addEventListener('mousedown', (e) => {
+  if (!$('noteMenu').hidden && !e.target.closest('#noteMenu, #noteMenuBtn')) {
+    $('noteMenu').hidden = true;
+    resetDelete();
+  }
+});
