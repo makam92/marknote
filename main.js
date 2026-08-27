@@ -64,9 +64,14 @@ let displayWindow = null;
 function openDisplayWindow(displayId, file) {
   const displays = screen.getAllDisplays();
   const primary = screen.getPrimaryDisplay();
-  const target = displays.find((d) => d.id === displayId)
-    || displays.find((d) => d.id !== primary.id)
-    || primary;
+  // displayId -1: plain window on the primary screen — for sharing in
+  // Teams/Zoom while an external display is connected.
+  const windowed = displayId === -1;
+  const target = windowed
+    ? primary
+    : (displays.find((d) => d.id === displayId)
+      || displays.find((d) => d.id !== primary.id)
+      || primary);
   dbg(`present:open requested=${displayId} chose=${target.id} primary=${primary.id} bounds=${JSON.stringify(target.bounds)} all=${JSON.stringify(displays.map((d) => ({ id: d.id, label: d.label, bounds: d.bounds })))}`);
   if (displayWindow && !displayWindow.isDestroyed()) {
     const old = displayWindow;
@@ -74,7 +79,7 @@ function openDisplayWindow(displayId, file) {
     old.removeAllListeners('closed');
     old.destroy();
   }
-  const external = target.id !== primary.id;
+  const external = !windowed && target.id !== primary.id;
   const b = target.bounds;
   displayWindow = new BrowserWindow({
     x: external ? b.x : b.x + 80,

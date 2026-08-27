@@ -3642,8 +3642,8 @@ async function openPresenterMode() {
     const pick = $('presDisplayPick');
     pick.innerHTML = displays
       .map((d) => `<option value="${d.id}">${escapeHtml(d.label)} ${d.width}×${d.height}${d.primary ? ' — this screen' : ''}</option>`)
-      .join('');
-    pick.hidden = displays.length < 2;
+      .join('') + '<option value="-1">Window — share in Teams/Zoom</option>';
+    pick.hidden = false;
     const target = displays.find((d) => !d.primary) || displays[0];
     pick.value = String(target.id);
     await native.openDisplay(target.id, note.file);
