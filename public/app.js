@@ -3718,3 +3718,94 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') { e.preventDefault(); presenterSend('prev'); }
   else if (e.key === 'Escape') closePresenterMode();
 });
+
+/* ——— PDF export ——— */
+// #print/<file> renders the note as a clean A4 document, #printdeck/<file>
+// as landscape slide pages. Always light theme; mermaid via the static
+// renderer so diagrams come out correctly. window.__printReady tells the
+// hidden Electron window (or a person in a browser tab) that it's safe to
+// print. In the app the ⋯ menu button runs printToPDF via IPC.
+
+async function bootPrintMode(deckMode) {
+  document.body.classList.add('print-mode');
+  document.documentElement.dataset.theme = 'light';
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'neutral',
+    fontFamily: 'Figtree, sans-serif',
+    suppressErrorRendering: true
+  });
+  const prefix = deckMode ? '#printdeck/' : '#print/';
+  const file = decodeURIComponent(location.hash.slice(prefix.length));
+  while (!state.notes.length) await new Promise((r) => setTimeout(r, 100));
+  const note = state.notes.find((n) => n.file === file);
+  if (!note) { document.title = 'Not found'; return; }
+  document.title = note.title;
+
+  const pageStyle = document.createElement('style');
+  pageStyle.textContent = deckMode
+    ? '@page { size: A4 landscape; margin: 0; }'
+    : '@page { size: A4; margin: 16mm 18mm; }';
+  document.head.appendChild(pageStyle);
+
+  const root = document.createElement('div');
+  root.id = 'printRoot';
+  root.className = deckMode ? 'print-deck' : 'print-doc';
+  document.body.appendChild(root);
+
+  if (deckMode) {
+    const chunks = splitSlides(expandTransclusions(note.body));
+    for (const chunk of chunks) {
+      const slide = document.createElement('div');
+      slide.className = 'print-slide';
+      const bg = (chunk.match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1];
+      if (bg) slide.style.background = bg;
+      const fg = (chunk.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
+      if (fg) slide.style.color = fg;
+      const inner = document.createElement('div');
+      inner.className = 'print-slide-inner rendered';
+      slide.appendChild(inner);
+      root.appendChild(slide);
+      renderMarkdown(inner, chunk, { staticMermaid: true });
+      inner.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+      await renderMermaidStatic(inner);
+    }
+  } else {
+    const doc = document.createElement('div');
+    doc.className = 'print-doc-inner rendered';
+    root.appendChild(doc);
+    renderMarkdown(doc, expandTransclusions(note.body), { staticMermaid: true });
+    doc.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+    await renderMermaidStatic(doc);
+  }
+
+  await Promise.all(
+    [...document.images].map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; })))
+  );
+  try { await document.fonts.ready; } catch (e) { /* older engines */ }
+  window.__printReady = true;
+  // In a plain browser tab, hand the person the print dialog directly.
+  const headless = navigator.webdriver || /HeadlessChrome/.test(navigator.userAgent);
+  if (!navigator.userAgent.includes('Electron') && !headless) setTimeout(() => window.print(), 400);
+}
+if (location.hash.startsWith('#print/')) bootPrintMode(false);
+else if (location.hash.startsWith('#printdeck/')) bootPrintMode(true);
+
+$('pdfBtn').addEventListener('click', async () => {
+  const note = state.current;
+  if (!note) return;
+  if (state.editing && state.dirty) {
+    const updated = await api.save(note.file, $('editor').value);
+    applySaved(updated);
+  }
+  const deckMode = isDeckNote(note);
+  if (window.marknoteNative && window.marknoteNative.exportPdf) {
+    alertBar('Creating PDF…');
+    const res = await window.marknoteNative.exportPdf(note.file, deckMode, note.title);
+    if (res && res.ok) alertBar('PDF saved: ' + res.path.split('/').pop());
+    else if (res && res.error) alertBar('PDF export failed: ' + res.error);
+  } else {
+    // browser fallback: the print view opens and shows the print dialog
+    window.open(location.origin + '/' + (deckMode ? '#printdeck/' : '#print/') + encodeURIComponent(note.file), '_blank');
+  }
+});

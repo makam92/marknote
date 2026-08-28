@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, screen, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { start, PORT } = require('./server');
@@ -109,6 +109,46 @@ ipcMain.handle('present:open', (_e, id, file) => openDisplayWindow(id, file));
 ipcMain.handle('present:close', () => {
   if (displayWindow && !displayWindow.isDestroyed()) displayWindow.destroy();
   displayWindow = null;
+});
+
+// ——— PDF export ———
+// A hidden window loads the print view (#print/ = A4 document,
+// #printdeck/ = landscape slide pages); the page sets window.__printReady
+// once markdown, mermaid, images and fonts are done, then printToPDF runs.
+ipcMain.handle('export:pdf', async (_e, file, isDeck, title) => {
+  const w = new BrowserWindow({
+    show: false,
+    width: isDeck ? 1400 : 900,
+    height: 900,
+    webPreferences: { contextIsolation: true, nodeIntegration: false }
+  });
+  try {
+    const route = isDeck ? '#printdeck/' : '#print/';
+    await w.loadURL(`http://localhost:${PORT}/${route}${encodeURIComponent(file)}`);
+    const t0 = Date.now();
+    let ready = false;
+    while (Date.now() - t0 < 25000) {
+      ready = await w.webContents.executeJavaScript('window.__printReady === true').catch(() => false);
+      if (ready) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!ready) return { error: 'render timed out' };
+    const pdf = await w.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true });
+    const safe = String(title || 'note').replace(/[/\\:]/g, '-');
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      defaultPath: path.join(app.getPath('downloads'), safe + '.pdf'),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (canceled || !filePath) return { canceled: true };
+    fs.writeFileSync(filePath, pdf);
+    shell.showItemInFolder(filePath);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    dbg('export:pdf failed: ' + err.message);
+    return { error: String(err.message).slice(0, 200) };
+  } finally {
+    if (!w.isDestroyed()) w.destroy();
+  }
 });
 
 app.whenReady().then(async () => {

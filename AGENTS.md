@@ -112,6 +112,13 @@ via the Present button; the deck editor (Edit deck) is the interactive editing U
 fullscreen on an external screen in the desktop app — while the main window shows
 current/next slide, speaker notes, timer and controls, synced via BroadcastChannel.
 
+## PDF export
+
+⋯ menu → "Export PDF": regular notes become an A4 document, deck notes become
+landscape slide pages (backgrounds included, mermaid rendered). The print views
+are also plain URLs — `#print/<file>` and `#printdeck/<file>` — which browsers
+can print directly.
+
 ## Meeting notes
 
 Created by the app's recorder; agents may also assemble them. Shape:

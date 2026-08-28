@@ -7,5 +7,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('marknoteNative', {
   displays: () => ipcRenderer.invoke('present:displays'),
   openDisplay: (id, file) => ipcRenderer.invoke('present:open', id, file),
-  closeDisplay: () => ipcRenderer.invoke('present:close')
+  closeDisplay: () => ipcRenderer.invoke('present:close'),
+  exportPdf: (file, isDeck, title) => ipcRenderer.invoke('export:pdf', file, isDeck, title)
 });
