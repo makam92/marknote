@@ -50,11 +50,18 @@ Body markdown…
   `![](@attachment/shot.png)`, `[clip](@attachment/rec.weba)`. Also valid inside mermaid
   image nodes: `A@{ img: "@attachment/x.png", w: 120, h: 80 }`.
 - Audio attachment links (`.weba/.mp3/.m4a/.wav/.ogg`) render as players; video files
-  as `<video>`; a YouTube/Vimeo URL **alone on its own line** becomes an embedded player.
+  (`.mp4/.webm/.m4v/.mov`) as `<video>` with seeking (range requests); a YouTube/Vimeo
+  URL **alone on its own line** becomes an embedded player. Prefer H.264 mp4 —
+  HEVC (typical iPhone `.mov`) may not decode in the app.
 - 3D models: a standalone link to a `.glb`/`.gltf` attachment renders as an interactive
   viewer (orbit/auto-rotate), in notes and on slides. Uploading a `.blend` converts it
   to `.glb` automatically when Blender is installed (source file is kept).
 - Avoid spaces/parens in new attachment filenames (uploads are sanitized to dashes).
+- Text alignment: fence a block with `::: center` … `:::` (also `right`,
+  `justify`; left is the default so it has no fence) — markdown inside renders
+  normally; works in notes, slides, deck previews and PDFs. One level only (no
+  nesting), and don't put the fences inside code blocks. The editor toolbar's
+  three alignment buttons write/toggle exactly this syntax.
 - Colored text: inline HTML `<span style="color:#2b6cb0">text</span>` — renders in
   notes, slides and previews (GitHub's web view strips inline styles, though).
 
@@ -191,4 +198,25 @@ URL-encode filenames in paths. `<file>` is always a basename ending in `.md`.
 - The front-matter block's `---` delimiters are not slide breaks; slides split only
   after the front matter ends.
 - macOS stores filenames NFD-decomposed; the API accepts NFC or NFD.
+- **Raw HTML in markdown**: a block element (`<div>`, `<model-viewer>`, …) must
+  start at the first column with a blank line before it, and must not contain
+  blank lines inside — the block passes through raw until the first blank line.
+  Never put a `<div>` inside a paragraph/one-liner: the HTML parser force-closes
+  the paragraph and the content is silently destroyed — use `<span>` for anything
+  that sits in flowing text.
+- **3D scene with a caption/legend**: wrap the viewer in the ready-made overlay
+  pattern instead of model-viewer hotspots (their projection is unreliable):
+
+  ```html
+  <div class="scene-box">
+  <model-viewer class="model-embed" src="/attachments/x.glb" camera-controls loading="eager" shadow-intensity="1" camera-orbit="25deg 70deg 105%"></model-viewer>
+  <span class="scene-tag"><span class="scene-dot"></span>Label text</span>
+  </div>
+  ```
+
+  `loading="eager"` is required for viewers on slides. An animated glb plays with
+  the `autoplay` attribute (only the first animation clip — merge clips at export).
+- **App URLs** (hash routes): `#note/<file>` opens a note, `#todos` the todo page,
+  `#print/<file>` / `#printdeck/<file>` the PDF views, `#display/<file>` the bare
+  presentation window (used by presenter mode).
 - The notes/attachments of a user are private data — read only what the task requires.

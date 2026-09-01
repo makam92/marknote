@@ -2056,3 +2056,40 @@ body.print-mode .sidebar, body.print-mode .main { display: none !important; }
 @media print {
   body.print-mode { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ——— text alignment ——— */
+
+.align-center { text-align: center; }
+.align-right { text-align: right; }
+.align-justify { text-align: justify; }
+.align-center table, .align-right table { margin-left: auto; }
+.align-center table { margin-right: auto; }
+.align-center img, .align-center model-viewer.model-embed { margin-left: auto; margin-right: auto; }
+
+/* Word-style three-bar icons for the toolbar buttons */
+.al-icon {
+  display: inline-block;
+  vertical-align: middle;
+  width: 14px;
+  height: 11px;
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-size: 14px 1.6px, 9px 1.6px, 12px 1.6px;
+  background-repeat: no-repeat;
+}
+.al-left { background-position: left 1px, left 5px, left 9px; }
+.al-center { background-position: center 1px, center 5px, center 9px; }
+.al-right { background-position: right 1px, right 5px, right 9px; }
+
+/* Alignment must move constrained BLOCK elements too (text-align only moves
+   inline content) — scene cards, 3D embeds and tables follow via margins. */
+.align-center .scene-box { margin-left: auto; margin-right: auto; }
+.align-right .scene-box,
+.align-right model-viewer.model-embed,
+.align-right table {
+  margin-left: auto;
+  margin-right: 0;
+}
+.align-right .scene-box model-viewer.model-embed { margin-left: 0; }

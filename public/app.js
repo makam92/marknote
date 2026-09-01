@@ -113,7 +113,10 @@ function preprocess(md) {
     .replaceAll('](@note/', '](#note/')
     // markdown link destinations can't contain raw spaces — encode them so
     // attachment filenames with spaces still render
-    .replace(/\]\(\/attachments\/([^)\n]+)\)/g, (m, p1) => '](/attachments/' + p1.replace(/ /g, '%20') + ')');
+    .replace(/\]\(\/attachments\/([^)\n]+)\)/g, (m, p1) => '](/attachments/' + p1.replace(/ /g, '%20') + ')')
+    // text alignment: ::: center|right|justify … ::: (Word-style blocks)
+    .replace(/^:::[ \t]*(center|right|justify)[ \t]*$/gm, '<!--align:$1-->')
+    .replace(/^:::[ \t]*$/gm, '<!--/align-->');
 }
 
 const canon = (s) => s.normalize('NFC').toLowerCase().trim();
@@ -316,6 +319,7 @@ async function renderMermaidStatic(el) {
 function renderMarkdown(el, body, opts = {}) {
   // breaks: true — a single newline renders as a line break, like Notable did.
   el.innerHTML = marked.parse(preprocess(expandTransclusions(body)), { gfm: true, breaks: true });
+  applyAlignBlocks(el);
   linkifyWikiLinks(el);
   embedVideos(el);
   el.querySelectorAll('pre > code.language-mermaid').forEach((code, i) => {
@@ -3862,3 +3866,67 @@ document.addEventListener('keydown', (e) => {
   const active = document.querySelector('#noteList .note-item.active');
   if (active) active.scrollIntoView({ block: 'nearest' });
 });
+
+/* ——— text alignment blocks ——— */
+// ::: center … ::: (also right/justify) becomes a wrapping div — markdown
+// inside is processed normally since the markers travel through marked as
+// HTML comments. Nesting is not supported.
+function applyAlignBlocks(el) {
+  let wrap = null;
+  for (const node of [...el.childNodes]) {
+    if (node.nodeType === Node.COMMENT_NODE) {
+      const m = node.nodeValue.match(/^align:(center|right|justify)$/);
+      if (m) {
+        wrap = document.createElement('div');
+        wrap.className = 'align-' + m[1];
+        el.insertBefore(wrap, node);
+        node.remove();
+        continue;
+      }
+      if (node.nodeValue === '/align') {
+        wrap = null;
+        node.remove();
+        continue;
+      }
+    }
+    if (wrap) wrap.appendChild(node);
+  }
+}
+
+// Toolbar: wrap the selected lines (or the current line) in an alignment
+// block; same kind again — or the left button — unwraps. Undo-friendly via
+// tbReplace.
+function setAlignment(kind) {
+  const box = tbb();
+  const v = box.value;
+  let bs = v.lastIndexOf('\n', box.selectionStart - 1) + 1;
+  let be = v.indexOf('\n', box.selectionEnd);
+  if (be === -1) be = v.length;
+  let existing = null;
+  const selfM = v.slice(bs, be).match(/^:::[ \t]*(center|right|justify)[ \t]*\n([\s\S]*?)\n:::[ \t]*$/);
+  if (selfM) {
+    existing = selfM[1];
+  } else {
+    // wrapper lines sitting just outside the selected block?
+    const openM = v.slice(0, bs).match(/(^|\n)(:::[ \t]*(center|right|justify)[ \t]*\n)$/);
+    const closeM = v.slice(be).match(/^(\n:::[ \t]*)(\n|$)/);
+    if (openM && closeM) {
+      existing = openM[3];
+      bs -= openM[2].length;
+      be += closeM[1].length;
+    }
+  }
+  const inner = existing
+    ? v.slice(bs, be).replace(/^:::[^\n]*\n/, '').replace(/\n:::[ \t]*$/, '')
+    : v.slice(bs, be);
+  const out = (!kind || existing === kind) ? inner : `::: ${kind}\n${inner}\n:::`;
+  if (out === v.slice(bs, be)) return;
+  tbReplace(bs, be, out);
+  // keep the content selected so repeated clicks toggle/swap the same block
+  const innerStart = bs + (out === inner ? 0 : out.indexOf('\n') + 1);
+  box.setSelectionRange(innerStart, innerStart + inner.length);
+}
+
+toolbarActions.alignLeft = () => setAlignment(null);
+toolbarActions.alignCenter = () => setAlignment('center');
+toolbarActions.alignRight = () => setAlignment('right');
