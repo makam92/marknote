@@ -111,11 +111,15 @@ function preprocess(md) {
     // also covers mermaid image nodes: img: "@attachment/x.png"
     .replaceAll('"@attachment/', '"/attachments/')
     .replaceAll('](@note/', '](#note/')
+    // image size: ![](url =400) / =400x300 → #mnw fragment read after render
+    .replace(/(!\[[^\]]*\]\()([^)\n]+?)\s+=(\d+)(?:x(\d+))?((?:\s+"[^"]*")?)\)/g,
+      (m, pre, url, w, h, title) => `${pre}${url}${url.includes('#') ? '&' : '#'}mnw=${w}${h ? '&mnh=' + h : ''}${title || ''})`)
     // markdown link destinations can't contain raw spaces — encode them so
     // attachment filenames with spaces still render
-    .replace(/\]\(\/attachments\/([^)\n]+)\)/g, (m, p1) => '](/attachments/' + p1.replace(/ /g, '%20') + ')')
+    .replace(/\]\(\/attachments\/([^)\n"]+?)(\s+"[^"]*")?\)/g,
+      (m, p1, t) => '](/attachments/' + p1.trim().replace(/ /g, '%20') + (t || '') + ')')
     // text alignment: ::: center|right|justify … ::: (Word-style blocks)
-    .replace(/^:::[ \t]*(center|right|justify)[ \t]*$/gm, '<!--align:$1-->')
+    .replace(/^:::[ \t]*(center|right|justify|row)[ \t]*$/gm, '<!--align:$1-->')
     .replace(/^:::[ \t]*$/gm, '<!--/align-->');
 }
 
@@ -321,6 +325,23 @@ function renderMarkdown(el, body, opts = {}) {
   // breaks: true — a single newline renders as a line break, like Notable did.
   el.innerHTML = marked.parse(preprocess(expandTransclusions(body)), { gfm: true, breaks: true });
   applyAlignBlocks(el);
+  el.querySelectorAll('img[title]').forEach((img) => {
+    if (!img.title.trim() || img.closest('.img-fig')) return;
+    const fig = document.createElement('span');
+    fig.className = 'img-fig';
+    img.replaceWith(fig);
+    const cap = document.createElement('span');
+    cap.className = 'img-cap';
+    cap.textContent = img.title;
+    fig.append(img, cap);
+  });
+  el.querySelectorAll('img[src*="mnw="]').forEach((img) => {
+    const frag = (img.getAttribute('src').split('#')[1] || '');
+    const w = (frag.match(/mnw=(\d+)/) || [])[1];
+    const h = (frag.match(/mnh=(\d+)/) || [])[1];
+    if (w) img.style.width = w + 'px';
+    if (h) img.style.height = h + 'px';
+  });
   linkifyWikiLinks(el);
   embedVideos(el);
   el.querySelectorAll('pre > code.language-mermaid').forEach((code, i) => {
@@ -3903,24 +3924,26 @@ document.addEventListener('keydown', (e) => {
 // inside is processed normally since the markers travel through marked as
 // HTML comments. Nesting is not supported.
 function applyAlignBlocks(el) {
-  let wrap = null;
+  const stack = [];
   for (const node of [...el.childNodes]) {
     if (node.nodeType === Node.COMMENT_NODE) {
-      const m = node.nodeValue.match(/^align:(center|right|justify)$/);
+      const m = node.nodeValue.match(/^align:(center|right|justify|row)$/);
       if (m) {
-        wrap = document.createElement('div');
+        const wrap = document.createElement('div');
         wrap.className = 'align-' + m[1];
-        el.insertBefore(wrap, node);
+        if (stack.length) stack[stack.length - 1].appendChild(wrap);
+        else el.insertBefore(wrap, node);
+        stack.push(wrap);
         node.remove();
         continue;
       }
       if (node.nodeValue === '/align') {
-        wrap = null;
+        stack.pop();
         node.remove();
         continue;
       }
     }
-    if (wrap) wrap.appendChild(node);
+    if (stack.length) stack[stack.length - 1].appendChild(node);
   }
 }
 
@@ -3934,12 +3957,12 @@ function setAlignment(kind) {
   let be = v.indexOf('\n', box.selectionEnd);
   if (be === -1) be = v.length;
   let existing = null;
-  const selfM = v.slice(bs, be).match(/^:::[ \t]*(center|right|justify)[ \t]*\n([\s\S]*?)\n:::[ \t]*$/);
+  const selfM = v.slice(bs, be).match(/^:::[ \t]*(center|right|justify|row)[ \t]*\n([\s\S]*?)\n:::[ \t]*$/);
   if (selfM) {
     existing = selfM[1];
   } else {
     // wrapper lines sitting just outside the selected block?
-    const openM = v.slice(0, bs).match(/(^|\n)(:::[ \t]*(center|right|justify)[ \t]*\n)$/);
+    const openM = v.slice(0, bs).match(/(^|\n)(:::[ \t]*(center|right|justify|row)[ \t]*\n)$/);
     const closeM = v.slice(be).match(/^(\n:::[ \t]*)(\n|$)/);
     if (openM && closeM) {
       existing = openM[3];
@@ -3961,6 +3984,7 @@ function setAlignment(kind) {
 toolbarActions.alignLeft = () => setAlignment(null);
 toolbarActions.alignCenter = () => setAlignment('center');
 toolbarActions.alignRight = () => setAlignment('right');
+toolbarActions.alignRow = () => setAlignment('row');
 
 /* ——— backup: export/import everything as a zip ——— */
 // For users who don't git-push their notes: Export writes notes/ +
@@ -4256,6 +4280,8 @@ for (const boxEl of [ed, $('deckCode')]) {
 // (unlockedNotes) while the app is open. Front matter stays readable so lists,
 // tags and renames keep working.
 
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const LOCK_MARK = '<!-- marknote:locked v1 -->';
 const unlockedNotes = new Map(); // file → { pass, plain }
 
@@ -4523,3 +4549,108 @@ $('rendered').addEventListener('mouseover', (e) => {
   });
   pre.appendChild(btn);
 });
+
+/* ——— drag-to-resize images in the rendered view ——— */
+// Hover an image → a corner grip appears; drag it and on release the width
+// is written back into the markdown source as the =W suffix. Works for
+// locked notes too (rewrites the cached plaintext and re-encrypts).
+
+const imgGrip = document.createElement('div');
+imgGrip.id = 'imgGrip';
+imgGrip.hidden = true;
+document.body.appendChild(imgGrip);
+let gripImg = null;
+let gripDrag = null;
+
+function positionGrip() {
+  if (!gripImg || !document.contains(gripImg)) { imgGrip.hidden = true; gripImg = null; return; }
+  const r = gripImg.getBoundingClientRect();
+  imgGrip.style.left = r.right - 7 + 'px';
+  imgGrip.style.top = r.bottom - 7 + 'px';
+}
+
+$('rendered').addEventListener('mouseover', (e) => {
+  const img = e.target.closest('img');
+  if (!img || gripDrag) return;
+  gripImg = img;
+  imgGrip.hidden = false;
+  positionGrip();
+});
+document.addEventListener('mousemove', (e) => {
+  if (gripDrag) {
+    const w = Math.max(60, Math.round(gripDrag.startW + (e.clientX - gripDrag.startX)));
+    gripImg.style.width = w + 'px';
+    gripImg.style.height = 'auto';
+    gripDrag.w = w;
+    positionGrip();
+    e.preventDefault();
+    return;
+  }
+  if (!gripImg || imgGrip.hidden) return;
+  // hide the grip when the pointer leaves both image and grip
+  if (!e.target.closest('img') && e.target !== imgGrip) {
+    const r = gripImg.getBoundingClientRect();
+    const near = e.clientX > r.left - 8 && e.clientX < r.right + 16 && e.clientY > r.top - 8 && e.clientY < r.bottom + 16;
+    if (!near) { imgGrip.hidden = true; gripImg = null; }
+  }
+});
+document.addEventListener('scroll', () => { if (!gripDrag) positionGrip(); }, true);
+
+imgGrip.addEventListener('mousedown', (e) => {
+  if (!gripImg) return;
+  e.preventDefault();
+  gripDrag = { startX: e.clientX, startW: gripImg.getBoundingClientRect().width, w: null };
+  document.body.classList.add('img-resizing');
+});
+
+document.addEventListener('mouseup', async () => {
+  if (!gripDrag) return;
+  const w = gripDrag.w;
+  gripDrag = null;
+  document.body.classList.remove('img-resizing');
+  if (w && gripImg) await persistImageWidth(gripImg, w);
+});
+
+async function persistImageWidth(img, w) {
+  const note = state.current;
+  if (!note) return;
+  const srcPath = img.getAttribute('src').split('#')[0];
+  if (!srcPath.startsWith('/attachments/')) return;
+  const name = decodeURIComponent(srcPath.replace('/attachments/', ''));
+  // which occurrence of this image is it?
+  const same = [...$('rendered').querySelectorAll('img')].filter(
+    (i) => i.getAttribute('src').split('#')[0] === srcPath
+  );
+  const idx = same.indexOf(img);
+  const nameRe = escapeRegExp(name).replace(/\\ /g, '(?: |%20)');
+  const re = new RegExp(
+    `(!\\[[^\\]]*\\]\\((?:@attachment/|/attachments/)${nameRe})(\\s+=\\d+(?:x\\d+)?)?\\)`,
+    'g'
+  );
+  const locked = isLockedBody(note.body);
+  const u = locked ? unlockedNotes.get(note.file) : null;
+  if (locked && !u) return;
+  let text = locked ? u.plain : await api.raw(note.file);
+  let n = -1;
+  const nextText = text.replace(re, (m, pre) => {
+    n += 1;
+    return n === idx ? `${pre} =${w})` : m;
+  });
+  if (nextText === text) { alertBar('Could not find the image in the source'); return; }
+  let updated;
+  if (locked) {
+    const enc = await encryptBody(u.pass, nextText);
+    const rawText = await api.raw(note.file);
+    const fmEnd = frontmatterEndIndex(rawText);
+    updated = await api.save(note.file, rawText.slice(0, fmEnd) + '\n' + enc + '\n');
+    unlockedNotes.set(note.file, { pass: u.pass, plain: nextText });
+  } else {
+    updated = await api.save(note.file, nextText);
+  }
+  const scroll = $('noteView').closest('.main').scrollTop;
+  applySaved(updated);
+  renderNoteBody(state.current);
+  $('noteView').closest('.main').scrollTop = scroll;
+  imgGrip.hidden = true;
+  gripImg = null;
+}

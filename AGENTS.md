@@ -56,11 +56,17 @@ Body markdown…
 - 3D models: a standalone link to a `.glb`/`.gltf` attachment renders as an interactive
   viewer (orbit/auto-rotate), in notes and on slides. Uploading a `.blend` converts it
   to `.glb` automatically when Blender is installed (source file is kept).
+- Image size: `![](@attachment/x.png =400)` or `=400x300` — width (and height)
+  in px, applied in notes, slides and PDFs. A quoted title becomes a caption
+  under the image: `![](@attachment/x.png =300 "Caption text")`. In the app the user can also drag
+  an image's corner grip in the reading view; the suffix is written back.
 - Avoid spaces/parens in new attachment filenames (uploads are sanitized to dashes).
 - Text alignment: fence a block with `::: center` … `:::` (also `right`,
-  `justify`; left is the default so it has no fence) — markdown inside renders
-  normally; works in notes, slides, deck previews and PDFs. One level only (no
-  nesting), and don't put the fences inside code blocks. The editor toolbar's
+  `justify`; left is the default so it has no fence). `::: row` lays its
+  blocks out side by side spread across the width — e.g. two images separated
+  by a blank line land at the left and right edges — markdown inside renders
+  normally; works in notes, slides, deck previews and PDFs. Nesting works
+  (e.g. `::: center` inside `::: row`); don't put fences inside code blocks. The editor toolbar's
   three alignment buttons write/toggle exactly this syntax.
 - Colored text: inline HTML `<span style="color:#2b6cb0">text</span>` — renders in
   notes, slides and previews (GitHub's web view strips inline styles, though).

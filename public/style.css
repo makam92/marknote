@@ -2233,3 +2233,54 @@ body.print-mode .sidebar, body.print-mode .main { display: none !important; }
   transition: opacity 0.15s;
 }
 .rendered pre:hover .pre-copy { opacity: 1; }
+
+/* image resize grip */
+#imgGrip {
+  position: fixed;
+  z-index: 80;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border: 2px solid var(--paper);
+  border-radius: 4px;
+  cursor: nwse-resize;
+  box-shadow: 0 1px 4px #00000040;
+}
+body.img-resizing { cursor: nwse-resize; user-select: none; }
+body.img-resizing * { cursor: nwse-resize !important; }
+
+/* ::: row — blocks side by side, spread across the width */
+.align-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.align-row > * { margin: 0; min-width: 0; }
+/* nested alignment blocks share the width equally — that's what makes their
+   inner centering/right-alignment visible (bare items keep shrinkwrap) */
+.align-row > .align-center,
+.align-row > .align-right,
+.align-row > .align-justify { flex: 1; }
+.align-row .scene-box, .align-row model-viewer.model-embed { flex: 1; }
+
+/* image captions: ![](url "text") */
+.img-fig { display: inline-block; max-width: 100%; }
+.img-fig img { display: block; }
+.img-cap {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  font-style: italic;
+  margin-top: 5px;
+  text-align: center;
+  line-height: 1.4;
+}
+.al-row {
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-size: 5.5px 11px, 5.5px 11px;
+  background-position: left center, right center;
+}
