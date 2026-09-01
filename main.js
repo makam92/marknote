@@ -13,6 +13,8 @@ app.setName('Marknote');
 // Presentations can autoplay background music without a per-video gesture.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+let mainWindow = null;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1320,
@@ -28,6 +30,8 @@ function createWindow() {
     }
   });
 
+  mainWindow = win;
+  win.on('closed', () => { if (mainWindow === win) mainWindow = null; });
   win.loadURL(`http://localhost:${PORT}`);
 
   // External links open in the default browser, not inside the app.
@@ -92,7 +96,14 @@ function openDisplayWindow(displayId, file) {
     webPreferences: { contextIsolation: true, nodeIntegration: false }
   });
   displayWindow.loadURL(`http://localhost:${PORT}/#display/${encodeURIComponent(file)}`);
-  displayWindow.on('closed', () => { displayWindow = null; });
+  displayWindow.on('closed', () => {
+    displayWindow = null;
+    // authoritative "the display is gone" signal — covers Esc, ×, the traffic
+    // light and crashes alike (renderer-side messages die with the process)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('present:display-closed');
+    }
+  });
 }
 
 ipcMain.handle('present:displays', () => {

@@ -3569,11 +3569,21 @@ async function bootDisplayMode() {
     else if (m.type === 'close') window.close();
   };
   deck.on('slidechanged', report);
+  // Esc behaves exactly like ×: end the whole display window. Capture phase
+  // so the app's own Esc handling can't interfere or reorder.
+  const endDisplay = () => {
+    try { ch.postMessage({ type: 'ended' }); } catch (e) { /* channel gone */ }
+    setTimeout(() => window.close(), 120);
+  };
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') setTimeout(() => window.close(), 80);
-  });
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      endDisplay();
+    }
+  }, true);
   // the presentation overlay's × ends the whole display window, not just the deck
-  $('presentClose').addEventListener('click', () => setTimeout(() => window.close(), 60));
+  $('presentClose').addEventListener('click', endDisplay);
   // whatever closes this window — ×, Esc, red traffic light — tell the presenter
   window.addEventListener('pagehide', () => {
     try { ch.postMessage({ type: 'ended' }); } catch (e) { /* channel gone */ }
@@ -3712,6 +3722,14 @@ $('presDisplayPick').addEventListener('change', () => {
     $('presDisplayState').textContent = 'Moving display\u2026';
   }
 });
+// The main process tells us when the display window closed, however it
+// closed — end presenter mode with it.
+if (window.marknoteNative && window.marknoteNative.onDisplayClosed) {
+  window.marknoteNative.onDisplayClosed(() => {
+    if (!$('presenterView').hidden) closePresenterMode();
+  });
+}
+
 $('presenterBtn').addEventListener('click', openPresenterMode);
 $('presSlidePick').addEventListener('change', () => {
   if (presenterCh) presenterCh.postMessage({ type: 'goto', h: Number($('presSlidePick').value) });
@@ -3723,8 +3741,12 @@ document.addEventListener('keydown', (e) => {
   if ($('presenterView').hidden) return;
   if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); presenterSend('next'); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); presenterSend('prev'); }
-  else if (e.key === 'Escape') closePresenterMode();
-});
+  else if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closePresenterMode();
+  }
+}, true);
 
 /* ——— PDF export ——— */
 // #print/<file> renders the note as a clean A4 document, #printdeck/<file>
@@ -3815,4 +3837,28 @@ $('pdfBtn').addEventListener('click', async () => {
     // browser fallback: the print view opens and shows the print dialog
     window.open(location.origin + '/' + (deckMode ? '#printdeck/' : '#print/') + encodeURIComponent(note.file), '_blank');
   }
+});
+
+/* ——— ↑/↓ steps through the note list ——— */
+// After picking a note in the sidebar, arrow keys walk the visible list
+// (same order/filtering as shown). Inactive while editing, in overlays,
+// or when focus sits in a field.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  if (!state.current || state.editing) return;
+  if (deck || deckEd.open) return;
+  if ($('noteView').hidden) return;
+  if (!$('presenterView').hidden || !$('quickOpen').hidden || !$('mmModal').hidden || !$('todoSuggestModal').hidden) return;
+  const t = document.activeElement;
+  if (t && t.matches('input, textarea, select, [contenteditable="true"]')) return;
+  const rows = [...document.querySelectorAll('#noteList .note-item')];
+  if (!rows.length) return;
+  const idx = rows.findIndex((r) => r.dataset.file === state.current.file);
+  const next = rows[idx + (e.key === 'ArrowDown' ? 1 : -1)];
+  if (!next) return;
+  e.preventDefault();
+  openNote(next.dataset.file);
+  // openNote re-renders the list — scroll the FRESH active row into view
+  const active = document.querySelector('#noteList .note-item.active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
 });

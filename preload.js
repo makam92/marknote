@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld('marknoteNative', {
   displays: () => ipcRenderer.invoke('present:displays'),
   openDisplay: (id, file) => ipcRenderer.invoke('present:open', id, file),
   closeDisplay: () => ipcRenderer.invoke('present:close'),
-  exportPdf: (file, isDeck, title) => ipcRenderer.invoke('export:pdf', file, isDeck, title)
+  exportPdf: (file, isDeck, title) => ipcRenderer.invoke('export:pdf', file, isDeck, title),
+  onDisplayClosed: (cb) => ipcRenderer.on('present:display-closed', () => cb())
 });
