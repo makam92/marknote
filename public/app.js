@@ -3572,6 +3572,12 @@ async function bootDisplayMode() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') setTimeout(() => window.close(), 80);
   });
+  // the presentation overlay's × ends the whole display window, not just the deck
+  $('presentClose').addEventListener('click', () => setTimeout(() => window.close(), 60));
+  // whatever closes this window — ×, Esc, red traffic light — tell the presenter
+  window.addEventListener('pagehide', () => {
+    try { ch.postMessage({ type: 'ended' }); } catch (e) { /* channel gone */ }
+  });
   report();
 }
 if (location.hash.startsWith('#display/')) bootDisplayMode();
@@ -3656,6 +3662,7 @@ async function openPresenterMode() {
   presenterCh = new BroadcastChannel('marknote-present');
   presenterCh.onmessage = (e) => {
     const m = e.data;
+    if (m.type === 'ended') { closePresenterMode(); return; }
     if (m.type === 'state') {
       $('presDisplayState').textContent = 'Display connected';
       if (m.h !== presenterH) {
