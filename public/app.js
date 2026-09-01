@@ -3930,3 +3930,62 @@ function setAlignment(kind) {
 toolbarActions.alignLeft = () => setAlignment(null);
 toolbarActions.alignCenter = () => setAlignment('center');
 toolbarActions.alignRight = () => setAlignment('right');
+
+/* ——— backup: export/import everything as a zip ——— */
+// For users who don't git-push their notes: Export writes notes/ +
+// attachments/ as one zip; Import extracts one (overwriting same-named
+// files) after the server snapshots the current state to .backups/.
+
+$('backupBtn').addEventListener('click', () => {
+  $('backupMenu').hidden = !$('backupMenu').hidden;
+});
+document.addEventListener('mousedown', (e) => {
+  if (!$('backupMenu').hidden && !e.target.closest('#backupMenu, #backupBtn')) {
+    $('backupMenu').hidden = true;
+  }
+});
+
+$('backupExport').addEventListener('click', async () => {
+  $('backupMenu').hidden = true;
+  if (window.marknoteNative && window.marknoteNative.saveBackup) {
+    alertBar('Creating backup zip…');
+    const res = await window.marknoteNative.saveBackup();
+    if (res && res.ok) alertBar(`Backup saved (${Math.round(res.size / 1024 / 1024)} MB)`);
+    else if (res && res.error) alertBar('Backup failed: ' + res.error);
+  } else {
+    location.href = '/api/backup'; // browser: plain download
+  }
+});
+
+const backupFile = document.createElement('input');
+backupFile.type = 'file';
+backupFile.accept = '.zip';
+$('backupImport').addEventListener('click', () => {
+  $('backupMenu').hidden = true;
+  backupFile.click();
+});
+backupFile.addEventListener('change', async () => {
+  const f = backupFile.files[0];
+  backupFile.value = '';
+  if (!f) return;
+  alertBar('Importing backup…');
+  try {
+    const res = await fetch('/api/restore', { method: 'POST', body: f });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'import failed');
+    state.notes = await api.list();
+    renderTags();
+    renderList();
+    updateTodoCount();
+    if (state.current && !state.notes.find((n) => n.file === state.current.file)) {
+      state.current = null;
+      $('noteView').hidden = true;
+      $('empty').hidden = false;
+    } else if (state.current) {
+      openNote(state.current.file); // re-render possibly-updated content
+    }
+    alertBar(`Imported ${data.files} files — previous state saved in ${data.safety}`);
+  } catch (err) {
+    alertBar('Import failed: ' + String(err.message || err));
+  }
+});

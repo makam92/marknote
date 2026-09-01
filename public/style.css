@@ -2093,3 +2093,6 @@ body.print-mode .sidebar, body.print-mode .main { display: none !important; }
   margin-right: 0;
 }
 .align-right .scene-box model-viewer.model-embed { margin-left: 0; }
+
+.backup-wrap { position: relative; display: block; }
+.backup-menu { bottom: calc(100% + 4px); top: auto; left: 10px; right: auto; min-width: 150px; }

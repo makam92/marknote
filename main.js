@@ -162,6 +162,25 @@ ipcMain.handle('export:pdf', async (_e, file, isDeck, title) => {
   }
 });
 
+// ——— backup export ———
+ipcMain.handle('backup:save', async () => {
+  try {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      defaultPath: path.join(app.getPath('downloads'), `Marknote backup ${stamp}.zip`),
+      filters: [{ name: 'Zip', extensions: ['zip'] }]
+    });
+    if (canceled || !filePath) return { canceled: true };
+    const resp = await fetch(`http://localhost:${PORT}/api/backup`);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    fs.writeFileSync(filePath, buf);
+    shell.showItemInFolder(filePath);
+    return { ok: true, path: filePath, size: buf.length };
+  } catch (err) {
+    return { error: String(err.message).slice(0, 200) };
+  }
+});
+
 app.whenReady().then(async () => {
   try {
     await start();

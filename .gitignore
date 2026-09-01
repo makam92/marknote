@@ -5,3 +5,4 @@ attachments/
 models/
 .DS_Store
 icon/*.iconset/
+.backups/

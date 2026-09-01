@@ -62,6 +62,13 @@
 
   <nav id="noteList" class="note-list" aria-label="Notes"></nav>
 
+  <span class="backup-wrap">
+    <button id="backupBtn" class="trash-btn" title="Export or import all notes + attachments as a zip">Backup</button>
+    <div id="backupMenu" class="create-menu backup-menu" hidden>
+      <button id="backupExport">Export zip…</button>
+      <button id="backupImport">Import zip…</button>
+    </div>
+  </span>
   <button id="trashBtn" class="trash-btn" title="Deleted notes">Trash <span id="trashCount"></span></button>
 </aside>
 

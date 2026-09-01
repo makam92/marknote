@@ -7,7 +7,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 const ROOT = __dirname;
 const NOTES_DIR = path.join(ROOT, 'notes');
@@ -315,6 +315,59 @@ const server = http.createServer(async (req, res) => {
   const pathname = decodeURIComponent(url.pathname);
 
   try {
+    // Full backup: a zip of notes/ + attachments/, streamed straight from
+    // macOS's zip. For users who don't git-push their notes.
+    if (pathname === '/api/backup' && req.method === 'GET') {
+      // macOS's zip can't stream to stdout — write a temp zip, stream the file
+      const stamp = new Date().toISOString().slice(0, 10);
+      const tmp = path.join(os.tmpdir(), `marknote-backup-${Date.now()}.zip`);
+      await new Promise((resolve, reject) => {
+        execFile('/usr/bin/zip', ['-r', '-q', tmp, 'notes', 'attachments', '-x', '*.DS_Store'],
+          { cwd: ROOT, maxBuffer: 1024 * 1024 },
+          (err) => (err ? reject(err) : resolve()));
+      }).catch((err) => { throw new Error('zip failed: ' + err.message); });
+      const size = (await fsp.stat(tmp)).size;
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Length': size,
+        'Content-Disposition': `attachment; filename="Marknote backup ${stamp}.zip"`
+      });
+      const stream = fs.createReadStream(tmp);
+      stream.pipe(res);
+      stream.on('close', () => fsp.unlink(tmp).catch(() => {}));
+      return;
+    }
+
+    // Restore a backup zip: safety-snapshot the current state first, then
+    // extract (overwrite) — only notes/* and attachments/* paths are accepted.
+    if (pathname === '/api/restore' && req.method === 'POST') {
+      const body = await readBodyBuffer(req, 2 * 1024 * 1024 * 1024);
+      if (!body.length) return send(res, 400, { error: 'empty upload' });
+      const tmp = path.join(os.tmpdir(), `marknote-restore-${Date.now()}.zip`);
+      await fsp.writeFile(tmp, body);
+      const run = (cmd, args, opts) => new Promise((resolve, reject) => {
+        execFile(cmd, args, opts, (err, stdout, stderr) => (err ? reject(Object.assign(err, { stderr })) : resolve(stdout)));
+      });
+      try {
+        // does the zip contain anything we accept?
+        const listing = await run('/usr/bin/unzip', ['-Z1', tmp]).catch(() => '');
+        const wanted = listing.split('\n').filter((l) => /^(notes|attachments)\//.test(l) && !l.endsWith('/'));
+        if (!wanted.length) return send(res, 400, { error: 'zip contains no notes/ or attachments/' });
+        const backups = path.join(ROOT, '.backups');
+        await fsp.mkdir(backups, { recursive: true });
+        const safety = `pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+        await run('/usr/bin/zip', ['-r', '-q', path.join(backups, safety), 'notes', 'attachments', '-x', '*.DS_Store'], { cwd: ROOT });
+        // exit code 11 = nothing matched, already excluded above; -o overwrites
+        await run('/usr/bin/unzip', ['-o', '-q', tmp, 'notes/*', 'attachments/*', '-d', ROOT]);
+        return send(res, 200, { ok: true, files: wanted.length, safety: '.backups/' + safety });
+      } catch (err) {
+        console.error('restore:', err.message);
+        return send(res, 500, { error: 'restore failed: ' + String(err.message).slice(0, 200) });
+      } finally {
+        fsp.unlink(tmp).catch(() => {});
+      }
+    }
+
     if (pathname === '/api/notes' && req.method === 'GET') {
       return send(res, 200, await listNotes());
     }

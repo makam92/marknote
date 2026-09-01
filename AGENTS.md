@@ -189,6 +189,8 @@ use with the `Todos` tag; a `!time` without a date means today.
 | POST `/api/transcribe` | `{"file"}` (attachment) | whisper.cpp transcript, speaker-labelled |
 | POST `/api/summarize` | `{"text","title"}` | meeting summary via local `claude` CLI |
 | POST `/api/todo-suggest` | `{"text","title"}` | action items as `{suggestions:[…]}` via local `claude` CLI |
+| GET `/api/backup` | — | zip of `notes/` + `attachments/` (streamed) |
+| POST `/api/restore` | zip binary | extracts notes/attachments (overwrite); snapshots current state to `.backups/` first |
 
 URL-encode filenames in paths. `<file>` is always a basename ending in `.md`.
 
