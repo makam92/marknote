@@ -119,6 +119,30 @@ via the Present button; the deck editor (Edit deck) is the interactive editing U
 fullscreen on an external screen in the desktop app — while the main window shows
 current/next slide, speaker notes, timer and controls, synced via BroadcastChannel.
 
+## Templates
+
+`templates/*.md` — front-matter `title` is the display name shown under
+"+ Create → From template…"; `tags` copy to the new note. `{{title}}` and
+`{{date}}` in the body are filled in at creation. Three starters are seeded on
+first run (research, pitchdeck, meeting). API: GET `/api/templates` (list),
+GET `/api/templates/<file>` (raw). Backup zips include `templates/`.
+
+## Locked notes
+
+A locked note's body is passphrase-encrypted (PBKDF2 + AES-256-GCM, client
+side). On disk the body is:
+
+```
+<!-- marknote:locked v1 -->
+<base64, wrapped>
+```
+
+Front matter stays readable, so lists/tags/rename keep working. **Agents must
+never edit the base64 payload** — treat locked notes as opaque; their content
+is deliberately unreadable (search matches title only, transclusion shows a 🔒
+placeholder, PDF export refuses). Lock/unlock happens in the UI (note ⋯ menu);
+there is no recovery for a forgotten passphrase.
+
 ## PDF export
 
 ⋯ menu → "Export PDF": regular notes become an A4 document, deck notes become
@@ -189,7 +213,8 @@ use with the `Todos` tag; a `!time` without a date means today.
 | POST `/api/transcribe` | `{"file"}` (attachment) | whisper.cpp transcript, speaker-labelled |
 | POST `/api/summarize` | `{"text","title"}` | meeting summary via local `claude` CLI |
 | POST `/api/todo-suggest` | `{"text","title"}` | action items as `{suggestions:[…]}` via local `claude` CLI |
-| GET `/api/backup` | — | zip of `notes/` + `attachments/` (streamed) |
+| GET `/api/templates` · GET `/api/templates/<file>` | — | list templates / raw template |
+| GET `/api/backup` | — | zip of `notes/` + `attachments/` + `templates/` |
 | POST `/api/restore` | zip binary | extracts notes/attachments (overwrite); snapshots current state to `.backups/` first |
 
 URL-encode filenames in paths. `<file>` is always a basename ending in `.md`.

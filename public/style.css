@@ -2096,3 +2096,97 @@ body.print-mode .sidebar, body.print-mode .main { display: none !important; }
 
 .backup-wrap { position: relative; display: block; }
 .backup-menu { bottom: calc(100% + 4px); top: auto; left: 10px; right: auto; min-width: 150px; }
+
+/* template picker inside the create menu */
+.template-list {
+  border-top: 1px solid var(--line);
+  margin-top: 5px;
+  padding-top: 5px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.template-empty { font-size: 12px; color: var(--ink-faint); padding: 8px 12px; }
+
+/* ——— locked notes ——— */
+.lock-panel {
+  max-width: 380px;
+  margin: 60px auto;
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 34px 30px;
+}
+.lock-glyph { font-size: 34px; margin-bottom: 10px; }
+.lock-title { font-weight: 800; font-size: 17px; margin-bottom: 18px; }
+.lock-row { display: flex; gap: 8px; }
+.lock-row .lock-pass {
+  flex: 1;
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+}
+.lock-row .lock-pass:focus { border-color: var(--accent); }
+.lock-error { color: #c0392b; font-size: 12.5px; margin-top: 10px; }
+.lock-box { max-width: 420px; }
+.lock-form { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.lock-info { font-size: 12.5px; color: var(--ink-soft); }
+.lock-form input {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+}
+.lock-form input:focus { border-color: var(--accent); }
+.lock-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+/* template modal: picker + live preview */
+.template-box { width: min(860px, 100%); height: min(620px, 90vh); }
+.ts-head input#templateTitle {
+  font: inherit;
+  font-size: 13.5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+  width: 240px;
+}
+.ts-head input#templateTitle:focus { border-color: var(--accent); }
+.template-body { flex: 1; display: flex; min-height: 0; }
+.template-pick {
+  width: 190px;
+  flex: none;
+  border-right: 1px solid var(--line);
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.template-pick button {
+  text-align: left;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 13.5px;
+}
+.template-pick button:hover { background: var(--accent-soft); color: var(--accent); }
+.template-pick button.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.template-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 26px;
+  font-size: 13.5px;
+}
+.template-preview h1 { font-size: 22px; }
+.template-preview .mermaid svg { max-width: 100%; }

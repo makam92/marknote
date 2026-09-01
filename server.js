@@ -14,6 +14,7 @@ const NOTES_DIR = path.join(ROOT, 'notes');
 const ATTACH_DIR = path.join(ROOT, 'attachments');
 const TRASH_DIR = path.join(ROOT, '.trash');
 const PUBLIC_DIR = path.join(ROOT, 'public');
+const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const PORT = Number(process.env.PORT) || 4747;
 
 const MIME = {
@@ -315,6 +316,39 @@ const server = http.createServer(async (req, res) => {
   const pathname = decodeURIComponent(url.pathname);
 
   try {
+    // Note templates: plain .md files in templates/ (front-matter title = name).
+    if (pathname === '/api/templates' && req.method === 'GET') {
+      await fsp.mkdir(TEMPLATES_DIR, { recursive: true });
+      const files = (await fsp.readdir(TEMPLATES_DIR)).filter((f) => f.endsWith('.md') && !f.startsWith('.'));
+      const out = [];
+      for (const file of files) {
+        const [txt, stat] = await Promise.all([
+          fsp.readFile(path.join(TEMPLATES_DIR, file), 'utf8'),
+          fsp.stat(path.join(TEMPLATES_DIR, file))
+        ]);
+        const { meta } = parseFrontmatter(txt);
+        out.push({ file, title: meta.title || file.replace(/\.md$/, ''), tags: meta.tags });
+      }
+      out.sort((a2, b2) => a2.title.localeCompare(b2.title, 'sv'));
+      return send(res, 200, out);
+    }
+    if (pathname.startsWith('/api/templates/') && req.method === 'GET') {
+      const file = safeName(pathname.slice('/api/templates/'.length).normalize('NFC'));
+      if (!file) return send(res, 400, { error: 'bad filename' });
+      try {
+        return send(res, 200, await fsp.readFile(path.join(TEMPLATES_DIR, file), 'utf8'), 'text/markdown; charset=utf-8');
+      } catch {
+        return send(res, 404, { error: 'template not found' });
+      }
+    }
+    if (pathname.startsWith('/api/templates/') && req.method === 'PUT') {
+      const file = safeName(pathname.slice('/api/templates/'.length).normalize('NFC'));
+      if (!file || !file.endsWith('.md')) return send(res, 400, { error: 'bad filename' });
+      await fsp.mkdir(TEMPLATES_DIR, { recursive: true });
+      await fsp.writeFile(path.join(TEMPLATES_DIR, file), await readBody(req));
+      return send(res, 200, { ok: true, file });
+    }
+
     // Full backup: a zip of notes/ + attachments/, streamed straight from
     // macOS's zip. For users who don't git-push their notes.
     if (pathname === '/api/backup' && req.method === 'GET') {
@@ -322,7 +356,7 @@ const server = http.createServer(async (req, res) => {
       const stamp = new Date().toISOString().slice(0, 10);
       const tmp = path.join(os.tmpdir(), `marknote-backup-${Date.now()}.zip`);
       await new Promise((resolve, reject) => {
-        execFile('/usr/bin/zip', ['-r', '-q', tmp, 'notes', 'attachments', '-x', '*.DS_Store'],
+        execFile('/usr/bin/zip', ['-r', '-q', tmp, 'notes', 'attachments', 'templates', '-x', '*.DS_Store'],
           { cwd: ROOT, maxBuffer: 1024 * 1024 },
           (err) => (err ? reject(err) : resolve()));
       }).catch((err) => { throw new Error('zip failed: ' + err.message); });
@@ -351,14 +385,14 @@ const server = http.createServer(async (req, res) => {
       try {
         // does the zip contain anything we accept?
         const listing = await run('/usr/bin/unzip', ['-Z1', tmp]).catch(() => '');
-        const wanted = listing.split('\n').filter((l) => /^(notes|attachments)\//.test(l) && !l.endsWith('/'));
+        const wanted = listing.split('\n').filter((l) => /^(notes|attachments|templates)\//.test(l) && !l.endsWith('/'));
         if (!wanted.length) return send(res, 400, { error: 'zip contains no notes/ or attachments/' });
         const backups = path.join(ROOT, '.backups');
         await fsp.mkdir(backups, { recursive: true });
         const safety = `pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-        await run('/usr/bin/zip', ['-r', '-q', path.join(backups, safety), 'notes', 'attachments', '-x', '*.DS_Store'], { cwd: ROOT });
+        await run('/usr/bin/zip', ['-r', '-q', path.join(backups, safety), 'notes', 'attachments', 'templates', '-x', '*.DS_Store'], { cwd: ROOT });
         // exit code 11 = nothing matched, already excluded above; -o overwrites
-        await run('/usr/bin/unzip', ['-o', '-q', tmp, 'notes/*', 'attachments/*', '-d', ROOT]);
+        await run('/usr/bin/unzip', ['-o', '-q', tmp, 'notes/*', 'attachments/*', 'templates/*', '-d', ROOT]);
         return send(res, 200, { ok: true, files: wanted.length, safety: '.backups/' + safety });
       } catch (err) {
         console.error('restore:', err.message);
@@ -709,6 +743,105 @@ server.headersTimeout = 60 * 1000;
 // First run on a fresh clone: the data dirs don't exist yet.
 fs.mkdirSync(NOTES_DIR, { recursive: true });
 fs.mkdirSync(ATTACH_DIR, { recursive: true });
+
+// First run: seed a few starter templates (skipped once any template exists).
+(async () => {
+  try {
+    await fsp.mkdir(TEMPLATES_DIR, { recursive: true });
+    const existing = (await fsp.readdir(TEMPLATES_DIR)).filter((f) => f.endsWith('.md'));
+    if (existing.length) return;
+    const seed = (file, txt) => fsp.writeFile(path.join(TEMPLATES_DIR, file), txt);
+    await seed('research.md', `---
+tags: [Research]
+title: 'Research'
+---
+
+# {{title}}
+
+*Skapad {{date}}*
+
+## Sammanfattning
+
+## Källor
+
+- [Länk](https://)
+
+## Ordlista — förkortningar
+
+| Förkortning | Står för | Kort förklaring |
+| ----------- | -------- | --------------- |
+|             |          |                 |
+`);
+    await seed('pitchdeck.md', `---
+tags: [Presentation]
+title: 'Pitchdeck'
+---
+
+<!-- transition: slide -->
+
+# {{title}}
+
+Undertitel
+
+<!-- notes
+Talarnoter för titelsliden.
+-->
+
+---
+
+## Problemet
+
+<!-- steps -->
+
+- Punkt som klickas fram
+- Nästa punkt
+
+---
+
+## Så hänger det ihop
+
+\`\`\`mermaid
+flowchart LR
+  A[Start] --> B[Steg]
+  B --> C[Resultat]
+\`\`\`
+
+---
+
+## Lösningen
+
+---
+
+# Nästa steg
+`);
+    await seed('motesanteckning.md', `---
+tags: [Meeting]
+title: 'Mötesanteckning'
+---
+
+# {{title}}
+
+*{{date}}*
+
+## Närvarande
+
+-
+
+## Agenda
+
+-
+
+## Beslut
+
+-
+
+## Att göra
+
+- [ ]
+`);
+    console.log('seeded starter templates');
+  } catch (err) { console.error('template seed:', err.message); }
+})();
 
 // Rescue recordings whose app died mid-meeting: orphaned .part files become
 // playable .weba files, and the client turns them into notes on next load.

@@ -288,6 +288,7 @@ function expandTransclusions(text, depth = 0, seen = new Set()) {
   return text.replace(/!\[\[([^\]\n]+)\]\]/g, (m, name) => {
     const target = resolveNote(name.trim());
     if (!target || seen.has(target.file)) return m;
+    if (isLockedBody(target.body)) return `🔒 *${target.title} (locked)*`;
     const nextSeen = new Set(seen);
     nextSeen.add(target.file);
     return expandTransclusions(target.body, depth + 1, nextSeen);
@@ -387,6 +388,7 @@ function visibleNotes() {
 }
 
 function snippetFor(note, q) {
+  if (isLockedBody(note.body)) return '🔒';
   if (!q) {
     const line = note.body.split('\n').find((l) => l.trim() && !l.startsWith('#'));
     return line ? escapeHtml(line.trim().slice(0, 90)) : '';
@@ -704,14 +706,15 @@ function showNote(note) {
   $('deckBtn').hidden = !isDeckNote(note);
   $('presenterBtn').hidden = !isDeckNote(note);
   // any note with real content can yield todos — plans and research included
-  $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80;
+  $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80 || isLockedBody(note.body);
+  updateLockMenu(note);
   closeFind();
   renderBacklinks(note);
   $('editBtn').textContent = 'Edit';
   resetDelete();
   $('noteDate').textContent = formatDate(note.modified);
   renderHeaderTags(note);
-  renderMarkdown($('rendered'), note.body);
+  renderNoteBody(note);
   document.title = note.title + ' — Marknote';
   history.replaceState(null, '', '#note/' + encodeURIComponent(note.file));
   $('noteView').closest('.main').scrollTop = 0;
@@ -743,6 +746,17 @@ function applySaved(updated) {
 
 async function enterEdit() {
   state.raw = await api.raw(state.current.file);
+  if (isLockedBody(state.current.body)) {
+    const u = unlockedNotes.get(state.current.file);
+    if (!u) {
+      alertBar('Unlock the note first');
+      const pw = $('rendered').querySelector('.lock-pass');
+      if (pw) pw.focus();
+      return;
+    }
+    const fmEnd = frontmatterEndIndex(state.raw);
+    state.raw = state.raw.slice(0, fmEnd) + '\n' + u.plain;
+  }
   state.editing = true;
   $('editor').value = state.raw;
   $('rendered').hidden = true;
@@ -754,7 +768,7 @@ async function enterEdit() {
 
 async function exitEdit({ save }) {
   if (save && state.dirty) {
-    const updated = await api.save(state.current.file, $('editor').value);
+    const updated = await api.save(state.current.file, await rawForSave($('editor').value));
     applySaved(updated);
   }
   setDirty(false);
@@ -765,13 +779,17 @@ async function exitEdit({ save }) {
   $('editBtn').textContent = 'Edit';
   $('noteDate').textContent = formatDate(state.current.modified);
   renderHeaderTags(state.current);
-  renderMarkdown($('rendered'), state.current.body);
+  renderNoteBody(state.current);
   renderBacklinks(state.current);
+  if (pendingRelock === state.current.file) {
+    pendingRelock = null;
+    autoLock(state.current.file);
+  }
 }
 
 async function saveEditor() {
   if (!state.editing || !state.dirty) return;
-  const updated = await api.save(state.current.file, $('editor').value);
+  const updated = await api.save(state.current.file, await rawForSave($('editor').value));
   applySaved(updated);
 }
 
@@ -1575,7 +1593,7 @@ async function openPresentation() {
   if (!note || deck) return;
   // Present what you see: save pending editor changes first.
   if (state.editing && state.dirty) {
-    const updated = await api.save(note.file, $('editor').value);
+    const updated = await api.save(note.file, await rawForSave($('editor').value));
     applySaved(updated);
   }
   const body = state.current.body;
@@ -2995,6 +3013,13 @@ $('newNoteTitle').addEventListener('keydown', async (e) => {
       const fmEnd = frontmatterEndIndex(raw);
       raw = raw.slice(0, fmEnd) + '\n' + slidesStarter(title);
       await api.save(file, raw);
+    } else if (createKind === 'template' && createTemplateFile) {
+      const { body, tags } = await bodyFromTemplate(createTemplateFile, title);
+      let raw = await api.raw(file);
+      if (tags.length) raw = setTagsInRaw(raw, tags);
+      const fmEnd = frontmatterEndIndex(raw);
+      raw = raw.slice(0, fmEnd) + '\n' + body;
+      await api.save(file, raw);
     }
     state.notes = await api.list();
     $('newNoteTitle').value = '';
@@ -3003,6 +3028,7 @@ $('newNoteTitle').addEventListener('keydown', async (e) => {
     renderList();
     openNote(file);
     if (createKind === 'slides') openDeckEditor();
+    else if (createKind === 'template' && isDeckNote(state.current)) openDeckEditor();
     else enterEdit();
   }
 });
@@ -3644,7 +3670,7 @@ async function openPresenterMode() {
   const note = state.current;
   if (!note || displayWin) return;
   if (state.editing && state.dirty) {
-    const updated = await api.save(note.file, $('editor').value);
+    const updated = await api.save(note.file, await rawForSave($('editor').value));
     applySaved(updated);
   }
   presenterChunks = splitSlides(expandTransclusions(state.current.body));
@@ -3775,6 +3801,11 @@ async function bootPrintMode(deckMode) {
   if (!note) { document.title = 'Not found'; return; }
   document.title = note.title;
 
+  if (isLockedBody(note.body)) {
+    document.body.insertAdjacentHTML('beforeend', '<p style="padding:40px;font-size:18px">🔒 This note is locked and cannot be exported.</p>');
+    window.__printReady = true;
+    return;
+  }
   const pageStyle = document.createElement('style');
   pageStyle.textContent = deckMode
     ? '@page { size: A4 landscape; margin: 0; }'
@@ -3828,7 +3859,7 @@ $('pdfBtn').addEventListener('click', async () => {
   const note = state.current;
   if (!note) return;
   if (state.editing && state.dirty) {
-    const updated = await api.save(note.file, $('editor').value);
+    const updated = await api.save(note.file, await rawForSave($('editor').value));
     applySaved(updated);
   }
   const deckMode = isDeckNote(note);
@@ -3989,3 +4020,441 @@ backupFile.addEventListener('change', async () => {
     alertBar('Import failed: ' + String(err.message || err));
   }
 });
+
+/* ——— note templates ——— */
+// templates/*.md — front-matter title is the display name; {{title}} and
+// {{date}} in the body are filled in at creation. Tags copy over too.
+
+let createTemplateFile = null;
+
+let templateModalItems = [];
+
+async function refreshTemplatePreview() {
+  if (!createTemplateFile) return;
+  const title = $('templateTitle').value.trim() || 'Titel';
+  const { body } = await bodyFromTemplate(createTemplateFile, title);
+  renderMarkdown($('templatePreview'), body, { staticMermaid: true });
+  $('templatePreview').querySelectorAll('.transcribe-btn, .diagram-edit').forEach((el) => el.remove());
+  await renderMermaidStatic($('templatePreview'));
+}
+
+function pickTemplate(file) {
+  createTemplateFile = file;
+  $('templatePickList').querySelectorAll('button').forEach((b2) =>
+    b2.classList.toggle('active', b2.dataset.template === file));
+  refreshTemplatePreview();
+}
+
+$('fromTemplateBtn').addEventListener('click', async () => {
+  $('createMenu').hidden = true;
+  templateModalItems = await fetch('/api/templates').then((r) => r.json()).catch(() => []);
+  $('templatePickList').innerHTML = templateModalItems.length
+    ? templateModalItems.map((t) => `<button data-template="${escapeHtml(t.file)}">${escapeHtml(t.title)}</button>`).join('')
+    : '<div class="template-empty">No templates — add .md files to templates/</div>';
+  $('templateTitle').value = '';
+  $('templateCreate').disabled = true;
+  $('templatePreview').innerHTML = '';
+  $('templateModal').hidden = false;
+  if (templateModalItems.length) pickTemplate(templateModalItems[0].file);
+  $('templateTitle').focus();
+});
+
+$('templatePickList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-template]');
+  if (btn) pickTemplate(btn.dataset.template);
+});
+$('templateTitle').addEventListener('input', () => {
+  $('templateCreate').disabled = !$('templateTitle').value.trim();
+});
+let templatePreviewTimer = null;
+$('templateTitle').addEventListener('input', () => {
+  clearTimeout(templatePreviewTimer);
+  templatePreviewTimer = setTimeout(refreshTemplatePreview, 400);
+});
+$('templateCancel').addEventListener('click', () => { $('templateModal').hidden = true; });
+$('templateTitle').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !$('templateCreate').disabled) $('templateCreate').click();
+  if (e.key === 'Escape') $('templateModal').hidden = true;
+});
+
+$('templateCreate').addEventListener('click', async () => {
+  const title = $('templateTitle').value.trim();
+  if (!title || !createTemplateFile) return;
+  $('templateModal').hidden = true;
+  const { file } = await api.create(title);
+  const { body, tags } = await bodyFromTemplate(createTemplateFile, title);
+  let rawN = await api.raw(file);
+  if (tags.length) rawN = setTagsInRaw(rawN, tags);
+  const fmEnd = frontmatterEndIndex(rawN);
+  await api.save(file, rawN.slice(0, fmEnd) + '\n' + body);
+  state.notes = await api.list();
+  renderTags();
+  renderList();
+  openNote(file);
+  if (isDeckNote(state.current)) openDeckEditor();
+  else enterEdit();
+});
+
+// ⋯ menu: turn the current note into a template
+$('saveTemplateBtn').addEventListener('click', async () => {
+  const note = state.current;
+  if (!note || isLockedBody(note.body)) return;
+  const slug = note.title.toLowerCase().replace(/[^a-z0-9åäö]+/gi, '-').replace(/^-|-$/g, '') || 'template';
+  const tpl = `---\ntags: [${note.tags.map((t) => `'${t.replace(/'/g, "''")}'`).join(', ')}]\ntitle: '${note.title.replace(/'/g, "''")}'\n---\n\n` + note.body;
+  await fetch('/api/templates/' + encodeURIComponent(slug + '.md'), { method: 'PUT', body: tpl });
+  alertBar(`Saved as template: ${note.title}`);
+});
+
+async function bodyFromTemplate(file, title) {
+  const raw = await fetch('/api/templates/' + encodeURIComponent(file)).then((r) => r.text());
+  const { body, tags } = (() => {
+    // reuse the server's front-matter shape client-side
+    if (!raw.startsWith('---')) return { body: raw, tags: [] };
+    const end = raw.indexOf('\n---', 3);
+    if (end === -1) return { body: raw, tags: [] };
+    const header = raw.slice(0, end);
+    const tagsM = header.match(/^tags:\s*\[(.*)\]$/m);
+    const tags2 = tagsM && tagsM[1].trim()
+      ? tagsM[1].split(',').map((t) => t.trim().replace(/^'(.*)'$/, '$1')).filter(Boolean)
+      : [];
+    return { body: raw.slice(end + 4).replace(/^\r?\n/, ''), tags: tags2 };
+  })();
+  const today = todayStr();
+  const filled = body
+    .replaceAll('{{title}}', title)
+    .replaceAll('{{date}}', today);
+  return { body: filled, tags };
+}
+
+/* ——— markdown table editing: Tab walks cells, table auto-formats ——— */
+
+function tableBlockAt(v, pos) {
+  const isRow = (s) => /^\s*\|/.test(s);
+  let lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  let lineEnd = v.indexOf('\n', pos);
+  if (lineEnd === -1) lineEnd = v.length;
+  if (!isRow(v.slice(lineStart, lineEnd))) return null;
+  let start = lineStart;
+  while (start > 0) {
+    const ps = v.lastIndexOf('\n', start - 2) + 1;
+    if (!isRow(v.slice(ps, start - 1))) break;
+    start = ps;
+  }
+  let end = lineEnd;
+  while (end < v.length) {
+    const ne = v.indexOf('\n', end + 1);
+    const stop = ne === -1 ? v.length : ne;
+    if (!isRow(v.slice(end + 1, stop))) break;
+    end = stop;
+  }
+  return { start, end };
+}
+
+const tableCells = (line) => {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+};
+const isSepCells = (cells) => cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c || '-'));
+
+// Reformat a table block and return cell ranges for caret placement.
+function formatTable(text) {
+  const rows = text.split('\n').map(tableCells);
+  const cols = Math.max(...rows.map((r) => r.length));
+  rows.forEach((r) => { while (r.length < cols) r.push(isSepCells(r) ? '---' : ''); });
+  const widths = [];
+  for (let c = 0; c < cols; c++) {
+    widths[c] = Math.max(3, ...rows.filter((r) => !isSepCells(r)).map((r) => (r[c] || '').length));
+  }
+  const sepIdx = rows.findIndex(isSepCells);
+  const aligns = sepIdx !== -1
+    ? rows[sepIdx].map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left'))
+    : [];
+  const ranges = [];
+  const lines = rows.map((r, ri) => {
+    const sep = isSepCells(r);
+    let line = '|';
+    const rowRanges = [];
+    for (let c = 0; c < cols; c++) {
+      const w = widths[c];
+      let cell;
+      if (sep) {
+        const al = aligns[c] || 'left';
+        cell = al === 'center' ? ':' + '-'.repeat(Math.max(1, w - 2)) + ':'
+          : al === 'right' ? '-'.repeat(Math.max(1, w - 1)) + ':'
+          : '-'.repeat(w);
+      } else {
+        cell = (r[c] || '').padEnd(w);
+      }
+      const cellStart = line.length + 1; // after '| '
+      line += ' ' + cell + ' |';
+      rowRanges.push({ start: cellStart, len: (sep ? cell : (r[c] || '')).length, sep });
+    }
+    ranges.push(rowRanges);
+    return line;
+  });
+  // convert per-line ranges to absolute offsets within the block
+  let off = 0;
+  const abs = lines.map((line, i) => {
+    const out = ranges[i].map((rr) => ({ start: off + rr.start, end: off + rr.start + rr.len, sep: rr.sep }));
+    off += line.length + 1;
+    return out;
+  });
+  return { text: lines.join('\n'), cells: abs };
+}
+
+function handleTableTab(box, shift) {
+  if (typeof suggest === 'object' && suggest.open) return false;
+  const v = box.value;
+  const block = tableBlockAt(v, box.selectionStart);
+  if (!block) return false;
+  const before = v.slice(block.start, box.selectionStart);
+  const rowIdx = before.split('\n').length - 1;
+  const lineText = before.slice(before.lastIndexOf('\n') + 1);
+  const cellIdx = Math.max(0, (lineText.match(/\|/g) || []).length - 1);
+  const fmt = formatTable(v.slice(block.start, block.end));
+  let r = rowIdx;
+  let c = cellIdx + (shift ? -1 : 1);
+  const cols = fmt.cells[0].length;
+  while (true) {
+    if (c >= cols) { r += 1; c = 0; }
+    if (c < 0) { r -= 1; c = cols - 1; }
+    if (r < 0) { r = 0; c = 0; break; }
+    if (r >= fmt.cells.length) {
+      // Tab past the last cell: append an empty row
+      const empty = '|' + (' '.repeat(3) + ' |').repeat(cols);
+      fmt.text += '\n' + empty;
+      fmt.cells.push([...Array(cols)].map((_, i) => {
+        const start = fmt.text.length - empty.length + 2 + i * 6;
+        return { start, end: start, sep: false };
+      }));
+      break;
+    }
+    if (fmt.cells[r][c] && fmt.cells[r][c].sep) { c += shift ? -1 : 1; continue; }
+    break;
+  }
+  tbReplace(block.start, block.end, fmt.text);
+  const target = fmt.cells[r][Math.max(0, Math.min(c, cols - 1))];
+  box.setSelectionRange(block.start + target.start, block.start + target.end);
+  return true;
+}
+
+for (const boxEl of [ed, $('deckCode')]) {
+  boxEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (handleTableTab(boxEl, e.shiftKey)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+}
+
+/* ——— locked notes: passphrase-encrypted bodies ——— */
+// On disk the body becomes a marker line + base64(salt|iv|AES-GCM ciphertext),
+// key derived with PBKDF2-SHA256 (310k rounds). Plaintext lives only in memory
+// (unlockedNotes) while the app is open. Front matter stays readable so lists,
+// tags and renames keep working.
+
+const LOCK_MARK = '<!-- marknote:locked v1 -->';
+const unlockedNotes = new Map(); // file → { pass, plain }
+
+function isLockedBody(body) {
+  return (body || '').trimStart().startsWith(LOCK_MARK);
+}
+
+async function lockKey(pass, salt) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptBody(pass, plain) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await lockKey(pass, salt);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+  const blob = new Uint8Array(salt.length + iv.length + ct.length);
+  blob.set(salt, 0);
+  blob.set(iv, salt.length);
+  blob.set(ct, salt.length + iv.length);
+  let b64 = btoa(String.fromCharCode(...blob));
+  b64 = b64.replace(/(.{76})/g, '$1\n'); // wrapped lines keep git diffs sane
+  return LOCK_MARK + '\n' + b64;
+}
+
+async function decryptBody(pass, body) {
+  const b64 = body.trim().slice(LOCK_MARK.length).replace(/\s+/g, '');
+  const blob = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const key = await lockKey(pass, blob.slice(0, 16));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.slice(16, 28) }, key, blob.slice(28));
+  return new TextDecoder().decode(pt);
+}
+
+// Editor saves route through this: locked notes are re-encrypted before PUT.
+async function rawForSave(text) {
+  if (!state.current || !isLockedBody(state.current.body)) return text;
+  const u = unlockedNotes.get(state.current.file);
+  if (!u) throw new Error('note is locked');
+  const fmEnd = frontmatterEndIndex(text);
+  const plain = text.slice(fmEnd).replace(/^\r?\n/, '');
+  const enc = await encryptBody(u.pass, plain);
+  unlockedNotes.set(state.current.file, { pass: u.pass, plain });
+  return text.slice(0, fmEnd) + '\n' + enc + '\n';
+}
+
+function renderNoteBody(note) {
+  if (isLockedBody(note.body)) {
+    const u = unlockedNotes.get(note.file);
+    if (u) {
+      renderMarkdown($('rendered'), u.plain);
+      return;
+    }
+    $('rendered').innerHTML = `
+      <div class="lock-panel">
+        <div class="lock-glyph">🔒</div>
+        <div class="lock-title">This note is locked</div>
+        <div class="lock-row">
+          <input type="password" class="lock-pass" placeholder="Passphrase" autocomplete="current-password">
+          <button class="btn-accent lock-unlock">Unlock</button>
+        </div>
+        <div class="lock-error" hidden></div>
+      </div>`;
+    return;
+  }
+  renderMarkdown($('rendered'), note.body);
+}
+
+function updateLockMenu(note) {
+  const locked = isLockedBody(note.body);
+  const cached = locked && unlockedNotes.has(note.file);
+  $('lockBtn').hidden = locked && !cached;
+  $('lockBtn').textContent = locked ? 'Lock again' : 'Lock note…';
+  $('removeLockBtn').hidden = !cached;
+}
+
+async function tryUnlock() {
+  const panel = $('rendered').querySelector('.lock-panel');
+  if (!panel || !state.current) return;
+  const pass = panel.querySelector('.lock-pass').value;
+  const err = panel.querySelector('.lock-error');
+  if (!pass) return;
+  try {
+    const plain = await decryptBody(pass, state.current.body);
+    unlockedNotes.set(state.current.file, { pass, plain });
+    scheduleAutoLock(state.current.file);
+    renderNoteBody(state.current);
+    updateLockMenu(state.current);
+  } catch (e) {
+    err.textContent = 'Wrong passphrase.';
+    err.hidden = false;
+    panel.querySelector('.lock-pass').select();
+  }
+}
+
+$('rendered').addEventListener('click', (e) => {
+  if (e.target.closest('.lock-unlock')) tryUnlock();
+});
+$('rendered').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.closest('.lock-pass')) tryUnlock();
+});
+
+/* lock modal (choosing a passphrase) */
+function openLockModal() {
+  $('lockPass1').value = '';
+  $('lockPass2').value = '';
+  $('lockError').hidden = true;
+  $('lockModal').hidden = false;
+  $('lockPass1').focus();
+}
+$('lockCancel').addEventListener('click', () => { $('lockModal').hidden = true; });
+$('lockConfirm').addEventListener('click', async () => {
+  const p1 = $('lockPass1').value;
+  const p2 = $('lockPass2').value;
+  const err = $('lockError');
+  if (p1.length < 4) { err.textContent = 'At least 4 characters.'; err.hidden = false; return; }
+  if (p1 !== p2) { err.textContent = 'Passphrases differ.'; err.hidden = false; return; }
+  $('lockModal').hidden = true;
+  const note = state.current;
+  if (state.editing) await exitEdit({ save: true });
+  const rawText = await api.raw(note.file);
+  const fmEnd = frontmatterEndIndex(rawText);
+  const plain = rawText.slice(fmEnd).replace(/^\r?\n/, '');
+  const enc = await encryptBody(p1, plain);
+  const updated = await api.save(note.file, rawText.slice(0, fmEnd) + '\n' + enc + '\n');
+  unlockedNotes.set(note.file, { pass: p1, plain });
+  scheduleAutoLock(note.file);
+  applySaved(updated);
+  renderNoteBody(state.current);
+  updateLockMenu(state.current);
+  renderList();
+  alertBar('Note locked 🔒');
+});
+
+$('lockBtn').addEventListener('click', () => {
+  const note = state.current;
+  if (!note) return;
+  if (isLockedBody(note.body)) {
+    // "Lock again" — forget the key for this session
+    unlockedNotes.delete(note.file);
+    renderNoteBody(note);
+    updateLockMenu(note);
+  } else {
+    openLockModal();
+  }
+});
+
+$('removeLockBtn').addEventListener('click', async () => {
+  const note = state.current;
+  const u = note && unlockedNotes.get(note.file);
+  if (!u) return;
+  const rawText = await api.raw(note.file);
+  const fmEnd = frontmatterEndIndex(rawText);
+  const updated = await api.save(note.file, rawText.slice(0, fmEnd) + '\n' + u.plain);
+  unlockedNotes.delete(note.file);
+  applySaved(updated);
+  renderNoteBody(state.current);
+  updateLockMenu(state.current);
+  renderList();
+  alertBar('Lock removed');
+});
+
+/* auto-lock: forget cached passphrases after idle */
+const AUTO_LOCK_MS = 2 * 60 * 1000;
+const lockTimers = new Map();
+let pendingRelock = null;
+
+function scheduleAutoLock(file) {
+  clearTimeout(lockTimers.get(file));
+  lockTimers.set(file, setTimeout(() => autoLock(file), AUTO_LOCK_MS));
+}
+
+function autoLock(file) {
+  clearTimeout(lockTimers.get(file));
+  lockTimers.delete(file);
+  if (!unlockedNotes.has(file)) return;
+  // never yank an open editor — relock when editing ends instead
+  if (state.current && state.current.file === file && state.editing) {
+    pendingRelock = file;
+    return;
+  }
+  unlockedNotes.delete(file);
+  if (state.current && state.current.file === file) {
+    renderNoteBody(state.current);
+    updateLockMenu(state.current);
+  }
+}
+
+// any interaction while the unlocked note is open counts as activity
+for (const ev of ['keydown', 'pointerdown', 'wheel']) {
+  document.addEventListener(ev, () => {
+    if (state.current && unlockedNotes.has(state.current.file)) {
+      scheduleAutoLock(state.current.file);
+    }
+  }, { passive: true });
+}

@@ -25,6 +25,7 @@
       <button data-create="note"><span class="cm-icon">📝</span> Note</button>
       <button data-create="slides"><span class="cm-icon">📊</span> Presentation</button>
       <button data-create="meeting"><span class="cm-icon">🎙</span> Meeting recording</button>
+      <button id="fromTemplateBtn"><span class="cm-icon">📄</span> From template…</button>
     </div>
   </header>
 
@@ -96,6 +97,9 @@
             <button id="presenterBtn" title="Present on a second screen with speaker notes here" hidden>Presenter mode</button>
             <button id="pdfBtn" title="Export this note as a PDF (decks become slide pages)">Export PDF</button>
             <button id="todoSuggestBtn" title="Let Claude suggest todos from this note" hidden>Suggest todos</button>
+            <button id="saveTemplateBtn" title="Save this note as a reusable template">Save as template</button>
+            <button id="lockBtn" title="Encrypt this note with a passphrase">Lock note…</button>
+            <button id="removeLockBtn" title="Decrypt permanently" hidden>Remove lock…</button>
             <button id="renameBtn" title="Rename note (updates links from other notes)">Rename</button>
             <button id="deleteBtn" class="danger" title="Move note to trash">Delete</button>
           </div>
@@ -350,6 +354,38 @@
       <div class="pres-label">Speaker notes</div>
       <div id="presNotes" class="pres-notes"></div>
     </aside>
+  </div>
+</div>
+
+<div id="templateModal" class="ts-modal" hidden>
+  <div class="ts-box template-box">
+    <header class="ts-head">
+      <strong>New from template</strong>
+      <span class="ts-spacer"></span>
+      <input id="templateTitle" type="text" placeholder="Title for the new note…" autocomplete="off" spellcheck="false">
+      <button id="templateCancel">Cancel</button>
+      <button id="templateCreate" class="btn-accent" disabled>Create</button>
+    </header>
+    <div class="template-body">
+      <div id="templatePickList" class="template-pick"></div>
+      <div id="templatePreview" class="template-preview rendered"></div>
+    </div>
+  </div>
+</div>
+
+<div id="lockModal" class="ts-modal" hidden>
+  <div class="ts-box lock-box">
+    <header class="ts-head"><strong>Lock note</strong><span class="ts-spacer"></span></header>
+    <div class="lock-form">
+      <p class="lock-info">The note body is encrypted with this passphrase (AES-256). <b>There is no recovery</b> — a forgotten passphrase means the content is gone. Unlocked notes re-lock after 2 minutes of inactivity.</p>
+      <input id="lockPass1" type="password" placeholder="Passphrase" autocomplete="new-password">
+      <input id="lockPass2" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+      <div id="lockError" class="lock-error" hidden></div>
+      <div class="lock-actions">
+        <button id="lockCancel">Cancel</button>
+        <button id="lockConfirm" class="btn-accent">Lock</button>
+      </div>
+    </div>
   </div>
 </div>
 
