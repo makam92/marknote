@@ -2190,3 +2190,46 @@ body.print-mode .sidebar, body.print-mode .main { display: none !important; }
 }
 .template-preview h1 { font-size: 22px; }
 .template-preview .mermaid svg { max-width: 100%; }
+
+/* header lock icon: gray = not locked, open+amber = key in memory, colored = sealed */
+.lock-icon { font-size: 13px; filter: grayscale(1) opacity(0.45); }
+.lock-icon:hover { filter: grayscale(0.4) opacity(0.8); }
+.lock-icon.is-open {
+  filter: none;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.lock-icon.is-sealed { filter: none; }
+
+/* click-to-copy */
+.rendered code:not(pre code) { cursor: pointer; position: relative; }
+.rendered code:not(pre code):hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+.rendered code.copied::after {
+  content: "✓ Copied";
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--paper);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  z-index: 5;
+}
+.rendered pre { position: relative; }
+.pre-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: var(--card);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.rendered pre:hover .pre-copy { opacity: 1; }

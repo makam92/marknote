@@ -4336,7 +4336,32 @@ function updateLockMenu(note) {
   $('lockBtn').hidden = locked && !cached;
   $('lockBtn').textContent = locked ? 'Lock again' : 'Lock note…';
   $('removeLockBtn').hidden = !cached;
+  // header icon mirrors the state
+  const icon = $('lockIconBtn');
+  icon.classList.toggle('is-sealed', locked && !cached);
+  icon.classList.toggle('is-open', cached);
+  icon.textContent = cached ? '🔓' : '🔒';
+  icon.title = !locked ? 'Lock note…'
+    : cached ? 'Lock again — forget the key'
+    : 'Locked — click to enter passphrase';
 }
+
+$('lockIconBtn').addEventListener('click', () => {
+  const note = state.current;
+  if (!note) return;
+  const locked = isLockedBody(note.body);
+  const cached = locked && unlockedNotes.has(note.file);
+  if (!locked) {
+    openLockModal();
+  } else if (cached) {
+    unlockedNotes.delete(note.file);
+    renderNoteBody(note);
+    updateLockMenu(note);
+  } else {
+    const pw = $('rendered').querySelector('.lock-pass');
+    if (pw) { pw.scrollIntoView({ block: 'center' }); pw.focus(); }
+  }
+});
 
 async function tryUnlock() {
   const panel = $('rendered').querySelector('.lock-panel');
@@ -4458,3 +4483,43 @@ for (const ev of ['keydown', 'pointerdown', 'wheel']) {
     }
   }, { passive: true });
 }
+
+/* ——— click-to-copy ——— */
+// Inline `code` in the rendered view copies itself on click (perfect for
+// keys/passwords in locked notes); code blocks get a hover Copy button.
+
+function flashCopied(el) {
+  el.classList.add('copied');
+  setTimeout(() => el.classList.remove('copied'), 900);
+}
+
+$('rendered').addEventListener('click', async (e) => {
+  const inline = e.target.closest('code');
+  if (!inline || inline.closest('pre')) return;
+  try {
+    await navigator.clipboard.writeText(inline.textContent);
+    flashCopied(inline);
+  } catch (err) {
+    alertBar('Could not copy');
+  }
+});
+
+// hover Copy button on <pre> blocks
+$('rendered').addEventListener('mouseover', (e) => {
+  const pre = e.target.closest('pre');
+  if (!pre || pre.querySelector('.pre-copy') || pre.closest('.mermaid-wrap')) return;
+  const btn = document.createElement('button');
+  btn.className = 'pre-copy';
+  btn.textContent = 'Copy';
+  btn.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(pre.querySelector('code')?.textContent ?? pre.textContent);
+      btn.textContent = '✓ Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+    } catch (err) {
+      alertBar('Could not copy');
+    }
+  });
+  pre.appendChild(btn);
+});
