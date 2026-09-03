@@ -800,6 +800,27 @@ server.headersTimeout = 60 * 1000;
 fs.mkdirSync(NOTES_DIR, { recursive: true });
 fs.mkdirSync(ATTACH_DIR, { recursive: true });
 
+// Agent docs travel with the data: seed AGENTS.md/CLAUDE.md into the data
+// dir (bundled installs) so agents pointed at ~/Documents/Marknote know the
+// file formats and API. Refreshed on app updates unless the user edited them.
+(async () => {
+  try {
+    if (DATA_ROOT === ROOT) return;
+    await fsp.mkdir(DATA_ROOT, { recursive: true });
+    for (const f of ['AGENTS.md', 'CLAUDE.md']) {
+      const src = path.join(ROOT, f);
+      if (!fs.existsSync(src)) continue;
+      const dst = path.join(DATA_ROOT, f);
+      let write = !(await fileExists(dst));
+      if (!write) {
+        const cur = await fsp.readFile(dst, 'utf8');
+        write = cur.startsWith('# Marknote'); // still ours → keep it current
+      }
+      if (write) await fsp.copyFile(src, dst);
+    }
+  } catch (err) { console.error('agent docs seed:', err.message); }
+})();
+
 // Fresh install (bundled app): greet the user so the empty state isn't scary.
 (async () => {
   try {
