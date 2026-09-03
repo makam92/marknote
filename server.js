@@ -323,6 +323,8 @@ function formatTranscript(stdout, silences = []) {
   return turns.map((t) => `- **${stampSeconds(t.start)}** "${t.parts.join(' ')}"`).join('\n');
 }
 
+let transcribeStatus = { phase: 'idle' };
+
 const dls = {
   model: { status: 'idle' },
   ffmpeg: { status: 'idle' }
@@ -659,6 +661,10 @@ const server = http.createServer(async (req, res) => {
 
     // Transcribe an attachment by name: ffmpeg streams it to 16kHz mono WAV
     // (constant memory, any length), then whisper.cpp runs locally.
+    if (pathname === '/api/transcribe-status' && req.method === 'GET') {
+      return send(res, 200, transcribeStatus);
+    }
+
     if (pathname === '/api/transcribe' && req.method === 'POST') {
       if (!WHISPER_BIN) return send(res, 503, { error: 'whisper-cli not installed (brew install whisper-cpp)' });
       if (!ffmpegPath()) return send(res, 503, { error: 'ffmpeg not installed (brew install ffmpeg)' });
@@ -673,6 +679,7 @@ const server = http.createServer(async (req, res) => {
       if (!(await fileExists(audioPath))) return send(res, 404, { error: 'attachment not found' });
       const tmp = path.join(os.tmpdir(), `notes-transcribe-${Date.now()}.wav`);
       try {
+        transcribeStatus = { phase: 'converting' };
         // Convert and detect silences in one pass — pauses mark speaker turns.
         const ffStderr = await new Promise((resolve, reject) => {
           execFile(
@@ -683,13 +690,33 @@ const server = http.createServer(async (req, res) => {
           );
         });
         const silences = [...ffStderr.matchAll(/silence_end: ([\d.]+)/g)].map((m) => parseFloat(m[1]));
+        const durM = ffStderr.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+        const totalSec = durM ? (+durM[1]) * 3600 + (+durM[2]) * 60 + parseFloat(durM[3]) : 0;
+        transcribeStatus = { phase: 'transcribing', pct: 0 };
+        // Stream whisper's output so the UI can show real progress from the
+        // transcript timestamps as they appear.
         const stdout = await new Promise((resolve, reject) => {
-          execFile(
-            WHISPER_BIN,
-            ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow'],
-            { timeout: 120 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 },
-            (err, out) => (err ? reject(err) : resolve(out))
-          );
+          const child = spawn(WHISPER_BIN, ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow']);
+          let out = '';
+          const killer = setTimeout(() => child.kill('SIGKILL'), 120 * 60 * 1000);
+          child.stdout.on('data', (chunk) => {
+            out += chunk;
+            if (totalSec) {
+              const stamps = String(chunk).match(/(\d{2}):(\d{2}):(\d{2})\.\d{3} -->/g);
+              if (stamps) {
+                const last = stamps[stamps.length - 1].match(/(\d{2}):(\d{2}):(\d{2})/);
+                const cur = (+last[1]) * 3600 + (+last[2]) * 60 + (+last[3]);
+                transcribeStatus = { phase: 'transcribing', pct: Math.min(99, Math.round((cur / totalSec) * 100)) };
+              }
+            }
+          });
+          child.stderr.on('data', () => {});
+          child.on('close', (code) => {
+            clearTimeout(killer);
+            if (code === 0) resolve(out);
+            else reject(new Error('whisper exited with code ' + code));
+          });
+          child.on('error', reject);
         });
         // Prefer Claude speaker attribution; fall back to pause-based turns.
         let text = null;
@@ -697,6 +724,7 @@ const server = http.createServer(async (req, res) => {
         const totalChars = segs.reduce((a, s) => a + s.text.length, 0);
         if (CLAUDE_BIN && segs.length && totalChars < 100000) {
           try {
+            transcribeStatus = { phase: 'attributing' };
             text = await attributeSpeakers(segs);
           } catch (err) {
             console.error('speaker attribution fell back:', err.message);
@@ -708,6 +736,7 @@ const server = http.createServer(async (req, res) => {
         console.error('transcribe:', err.message);
         return send(res, 500, { error: 'transcription failed: ' + String(err.message).slice(0, 200) });
       } finally {
+        transcribeStatus = { phase: 'idle' };
         fsp.unlink(tmp).catch(() => {});
       }
     }

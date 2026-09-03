@@ -2426,9 +2426,15 @@ async function transcribeAudio(src, btn) {
   if (!file) return;
   btn.disabled = true;
   const startedAt = Date.now();
-  const tick = setInterval(() => {
-    btn.textContent = `Transcribing… ${fmtElapsed(Date.now() - startedAt)}`;
-  }, 1000);
+  const tick = setInterval(async () => {
+    const t = fmtElapsed(Date.now() - startedAt);
+    let st = null;
+    try { st = await fetch('/api/transcribe-status').then((r) => r.json()); } catch (e) { /* keep elapsed */ }
+    if (st && st.phase === 'converting') btn.textContent = `Converting audio… ${t}`;
+    else if (st && st.phase === 'transcribing') btn.textContent = `Transcribing… ${st.pct != null ? st.pct + '% · ' : ''}${t}`;
+    else if (st && st.phase === 'attributing') btn.textContent = `Labelling speakers… ${t}`;
+    else btn.textContent = `Transcribing… ${t}`;
+  }, 1200);
   try {
     btn.textContent = 'Transcribing…';
     const tRes = await fetch('/api/transcribe', { method: 'POST', body: JSON.stringify({ file }) });

@@ -18,7 +18,7 @@ ditto "$SRC" "$APP"
 
 APPDIR="$APP/Contents/Resources/app"
 mkdir -p "$APPDIR/public"
-printf '{ "name": "marknote", "productName": "Marknote", "version": "1.0.2", "main": "main.js" }\n' \
+printf '{ "name": "marknote", "productName": "Marknote", "version": "1.0.3", "main": "main.js" }\n' \
   > "$APPDIR/package.json"
 cp "$PROJECT/main.js" "$PROJECT/server.js" "$PROJECT/preload.js" "$PROJECT/AGENTS.md" "$PROJECT/CLAUDE.md" "$APPDIR/"
 ditto "$PROJECT/public" "$APPDIR/public"
