@@ -1,11 +1,11 @@
 const { app, BrowserWindow, shell, screen, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { start, PORT } = require('./server');
+const { start, PORT, DATA_ROOT } = require('./server');
 
 // Presenter-mode debug trail — read .presenter-debug.log when placement misbehaves.
 function dbg(msg) {
-  try { fs.appendFileSync(path.join(__dirname, '.presenter-debug.log'), new Date().toISOString() + ' ' + msg + '\n'); } catch (e) { /* best-effort */ }
+  try { fs.appendFileSync(path.join(DATA_ROOT, '.presenter-debug.log'), new Date().toISOString() + ' ' + msg + '\n'); } catch (e) { /* best-effort */ }
 }
 
 app.setName('Marknote');

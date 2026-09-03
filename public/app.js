@@ -2457,7 +2457,7 @@ async function transcribeAudio(src, btn) {
     renderMarkdown($('rendered'), updated.body);
     renderBacklinks(updated);
     $('noteDate').textContent = formatDate(updated.modified);
-    alertBar(summary ? 'transcribed & summarized' : 'transcribed (summary unavailable)');
+    alertBar(summary ? 'transcribed & summarized' : ('transcribed — summary skipped. ' + (caps && !caps.claude ? CLAUDE_HINT : '')));
   } catch (err) {
     clearInterval(tick);
     btn.disabled = false;
@@ -2468,7 +2468,7 @@ async function transcribeAudio(src, btn) {
 
 $('rendered').addEventListener('click', (e) => {
   const btn = e.target.closest('.transcribe-btn');
-  if (btn && state.current) transcribeAudio(btn.dataset.src, btn);
+  if (btn && state.current && requireCap('transcribe')) transcribeAudio(btn.dataset.src, btn);
 });
 
 /* ——— emoji picker ——— */
@@ -3452,7 +3452,7 @@ let tsSuggestions = [];
 
 $('todoSuggestBtn').addEventListener('click', async () => {
   const note = state.current;
-  if (!note) return;
+  if (!note || !requireCap('claude')) return;
   $('todoSuggestModal').hidden = false;
   $('tsAdd').disabled = true;
   $('tsList').innerHTML = '<p class="ts-loading">Asking Claude to read the note…</p>';
@@ -4709,6 +4709,10 @@ $('analyzeUrl').addEventListener('keydown', (e) => {
 });
 
 async function startAnalyze(fileBlob, url) {
+  if (caps && (!caps.whisper || !caps.ffmpeg || !caps.whisperModel)) {
+    analyzeStatus(whisperHint());
+    return;
+  }
   try {
     let attach;
     if (fileBlob) {
@@ -4741,4 +4745,37 @@ async function startAnalyze(fileBlob, url) {
   } catch (err) {
     analyzeStatus('Failed: ' + String(err.message || err).slice(0, 160));
   }
+}
+
+/* ——— setup guidance for optional AI features ——— */
+// whisper/ffmpeg power transcription, the claude CLI powers summaries and
+// todo suggestions. When missing, clicks explain how to install instead of
+// failing with a raw error.
+
+let caps = null;
+(async () => {
+  try { caps = await fetch('/api/capabilities').then((r) => r.json()); } catch (e) { /* offline */ }
+})();
+
+const CLAUDE_HINT = 'Requires the Claude Code CLI — install from https://claude.com/claude-code and sign in once.';
+
+function whisperHint() {
+  const model = caps && caps.dataRoot ? caps.dataRoot + '/models/' : 'models/';
+  return `Transcription requires whisper-cpp + ffmpeg (brew install whisper-cpp ffmpeg) and the ggml-small.bin model in ${model}`;
+}
+
+function requireCap(kind) {
+  if (!caps) return true; // capabilities unknown — let the server answer
+  if (kind === 'transcribe') {
+    if (!caps.whisper || !caps.ffmpeg || !caps.whisperModel) {
+      alertBar(whisperHint());
+      return false;
+    }
+    return true;
+  }
+  if (kind === 'claude' && !caps.claude) {
+    alertBar(CLAUDE_HINT);
+    return false;
+  }
+  return true;
 }

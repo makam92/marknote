@@ -6,6 +6,24 @@ server in an Electron shell.
 
 ![Marknote icon](icon/notes-icon.svg.png)
 
+## Install (no tools needed)
+
+Grab **Marknote-mac.zip** from a release (or from whoever built it), unzip,
+drag **Marknote.app** to Applications and open it. First launch: right-click →
+Open to get past Gatekeeper (the app is unsigned). Your notes live as plain
+markdown in **~/Documents/Marknote/**.
+
+Optional AI extras (everything else works without them):
+
+- Transcription: `brew install whisper-cpp ffmpeg` + put `ggml-small.bin`
+  ([download](https://huggingface.co/ggerganov/whisper.cpp/tree/main)) in
+  `~/Documents/Marknote/models/`
+- Summaries & todo suggestions: install the
+  [Claude Code CLI](https://claude.com/claude-code) and sign in once
+
+To build the zip yourself: `npm install && ./build-dist.sh` → `dist/Marknote-mac.zip`.
+
+
 ## Features
 
 - **Plain markdown notes** with YAML front matter (title, labels, pinned) — grep-able,

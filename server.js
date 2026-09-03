@@ -9,12 +9,17 @@ const path = require('path');
 const os = require('os');
 const { execFile, spawn } = require('child_process');
 
-const ROOT = __dirname;
-const NOTES_DIR = path.join(ROOT, 'notes');
-const ATTACH_DIR = path.join(ROOT, 'attachments');
-const TRASH_DIR = path.join(ROOT, '.trash');
+const ROOT = __dirname; // code root (public/, vendored libs)
+// Data lives next to the code in repo/dev mode, but in ~/Documents/Marknote
+// when running from a bundled .app (the bundle must stay read-only).
+const BUNDLED = __dirname.includes('.app/Contents/Resources');
+const DATA_ROOT = process.env.MARKNOTE_DATA
+  || (BUNDLED ? path.join(os.homedir(), 'Documents', 'Marknote') : ROOT);
+const NOTES_DIR = path.join(DATA_ROOT, 'notes');
+const ATTACH_DIR = path.join(DATA_ROOT, 'attachments');
+const TRASH_DIR = path.join(DATA_ROOT, '.trash');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const TEMPLATES_DIR = path.join(ROOT, 'templates');
+const TEMPLATES_DIR = path.join(DATA_ROOT, 'templates');
 const PORT = Number(process.env.PORT) || 4747;
 
 const MIME = {
@@ -58,7 +63,9 @@ function findBin(candidates) {
 const WHISPER_BIN = findBin(['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli']);
 const FFMPEG_BIN = findBin(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
 const BLENDER_BIN = findBin(['/Applications/Blender.app/Contents/MacOS/Blender', '/opt/homebrew/bin/blender']);
-const WHISPER_MODEL = path.join(ROOT, 'models', 'ggml-small.bin');
+const WHISPER_MODEL = fs.existsSync(path.join(DATA_ROOT, 'models', 'ggml-small.bin'))
+  ? path.join(DATA_ROOT, 'models', 'ggml-small.bin')
+  : path.join(ROOT, 'models', 'ggml-small.bin');
 const CLAUDE_BIN = findBin([
   path.join(os.homedir(), '.local/bin/claude'),
   '/opt/homebrew/bin/claude',
@@ -316,6 +323,19 @@ const server = http.createServer(async (req, res) => {
   const pathname = decodeURIComponent(url.pathname);
 
   try {
+    // What optional helpers are installed? The UI uses this to show friendly
+    // setup guidance instead of raw errors.
+    if (pathname === '/api/capabilities' && req.method === 'GET') {
+      return send(res, 200, {
+        whisper: !!WHISPER_BIN,
+        whisperModel: await fileExists(WHISPER_MODEL),
+        ffmpeg: !!FFMPEG_BIN,
+        claude: !!CLAUDE_BIN,
+        blender: !!BLENDER_BIN,
+        dataRoot: DATA_ROOT
+      });
+    }
+
     // Download a media URL into attachments (for "Analyze recording" — e.g.
     // a direct link to an mp4/m4a). Auth-walled links (Teams/SharePoint) won't
     // work; download the file first in that case.
@@ -393,7 +413,7 @@ const server = http.createServer(async (req, res) => {
       const tmp = path.join(os.tmpdir(), `marknote-backup-${Date.now()}.zip`);
       await new Promise((resolve, reject) => {
         execFile('/usr/bin/zip', ['-r', '-q', tmp, 'notes', 'attachments', 'templates', '-x', '*.DS_Store'],
-          { cwd: ROOT, maxBuffer: 1024 * 1024 },
+          { cwd: DATA_ROOT, maxBuffer: 1024 * 1024 },
           (err) => (err ? reject(err) : resolve()));
       }).catch((err) => { throw new Error('zip failed: ' + err.message); });
       const size = (await fsp.stat(tmp)).size;
@@ -423,12 +443,12 @@ const server = http.createServer(async (req, res) => {
         const listing = await run('/usr/bin/unzip', ['-Z1', tmp]).catch(() => '');
         const wanted = listing.split('\n').filter((l) => /^(notes|attachments|templates)\//.test(l) && !l.endsWith('/'));
         if (!wanted.length) return send(res, 400, { error: 'zip contains no notes/ or attachments/' });
-        const backups = path.join(ROOT, '.backups');
+        const backups = path.join(DATA_ROOT, '.backups');
         await fsp.mkdir(backups, { recursive: true });
         const safety = `pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-        await run('/usr/bin/zip', ['-r', '-q', path.join(backups, safety), 'notes', 'attachments', 'templates', '-x', '*.DS_Store'], { cwd: ROOT });
+        await run('/usr/bin/zip', ['-r', '-q', path.join(backups, safety), 'notes', 'attachments', 'templates', '-x', '*.DS_Store'], { cwd: DATA_ROOT });
         // exit code 11 = nothing matched, already excluded above; -o overwrites
-        await run('/usr/bin/unzip', ['-o', '-q', tmp, 'notes/*', 'attachments/*', 'templates/*', '-d', ROOT]);
+        await run('/usr/bin/unzip', ['-o', '-q', tmp, 'notes/*', 'attachments/*', 'templates/*', '-d', DATA_ROOT]);
         return send(res, 200, { ok: true, files: wanted.length, safety: '.backups/' + safety });
       } catch (err) {
         console.error('restore:', err.message);
@@ -780,6 +800,56 @@ server.headersTimeout = 60 * 1000;
 fs.mkdirSync(NOTES_DIR, { recursive: true });
 fs.mkdirSync(ATTACH_DIR, { recursive: true });
 
+// Fresh install (bundled app): greet the user so the empty state isn't scary.
+(async () => {
+  try {
+    if (!BUNDLED && !process.env.MARKNOTE_DATA) return;
+    await fsp.mkdir(NOTES_DIR, { recursive: true });
+    const existing = (await fsp.readdir(NOTES_DIR)).filter((f) => f.endsWith('.md'));
+    if (existing.length) return;
+    const iso = new Date().toISOString();
+    await fsp.writeFile(path.join(NOTES_DIR, 'Welcome to Marknote.md'), `---
+tags: [Guide]
+title: 'Welcome to Marknote'
+created: '${iso}'
+modified: '${iso}'
+pinned: true
+---
+
+# Welcome to Marknote 👋
+
+Your notes live as plain markdown files in **~/Documents/Marknote/** — no
+database, no cloud. Take them anywhere.
+
+## The basics
+
+- **+ Create** — notes, presentations, meeting recordings, or from a template
+- **⌘P** jump to a note · **/** search · **⌘E** edit
+- Link notes by typing "[[" — backlinks appear automatically
+- Drag in images, video, audio, even 3D models (.glb)
+- Tables: press Tab inside one — it formats itself
+- Lock sensitive notes with the 🔒 button (AES-encrypted on disk)
+- **Backup** (bottom left) exports everything as a zip
+
+## Presentations
+
+Split a note into slides with "---" lines and press **Present**. With a second
+screen connected you get presenter mode: slides on the big screen, speaker
+notes on yours.
+
+## Optional extras (AI features)
+
+- **Meeting transcription**: install whisper-cpp and ffmpeg (brew install
+  whisper-cpp ffmpeg) and put ggml-small.bin in ~/Documents/Marknote/models/
+- **Summaries & todo suggestions**: install the Claude Code CLI
+  (https://claude.com/claude-code) and sign in once
+
+Everything else works without them. Delete this note whenever you like!
+`);
+    console.log('seeded welcome note');
+  } catch (err) { console.error('welcome seed:', err.message); }
+})();
+
 // First run: seed a few starter templates (skipped once any template exists).
 (async () => {
   try {
@@ -899,7 +969,7 @@ const recoveredFiles = [];
 // A line with both a date and a !time gets a macOS notification at that moment
 // (while the app is running). Fired reminders are recorded in .todo-reminders.json
 // so they never fire twice; reminders more than 2h stale are swallowed silently.
-const REMIND_STATE = path.join(ROOT, '.todo-reminders.json');
+const REMIND_STATE = path.join(DATA_ROOT, '.todo-reminders.json');
 let remindState = {};
 try { remindState = JSON.parse(fs.readFileSync(REMIND_STATE, 'utf8')); } catch { /* first run */ }
 
@@ -963,7 +1033,7 @@ function start() {
   });
 }
 
-module.exports = { start, PORT };
+module.exports = { start, PORT, DATA_ROOT };
 
 if (require.main === module) {
   start().catch((err) => {
