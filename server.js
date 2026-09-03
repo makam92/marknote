@@ -61,11 +61,16 @@ function findBin(candidates) {
 }
 
 const WHISPER_BIN = findBin(['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli']);
-const FFMPEG_BIN = findBin(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
+function ffmpegPath() {
+  const inData = path.join(DATA_ROOT, 'bin', 'ffmpeg');
+  if (fs.existsSync(inData)) return inData;
+  return findBin(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
+}
 const BLENDER_BIN = findBin(['/Applications/Blender.app/Contents/MacOS/Blender', '/opt/homebrew/bin/blender']);
-const WHISPER_MODEL = fs.existsSync(path.join(DATA_ROOT, 'models', 'ggml-small.bin'))
-  ? path.join(DATA_ROOT, 'models', 'ggml-small.bin')
-  : path.join(ROOT, 'models', 'ggml-small.bin');
+function whisperModelPath() {
+  const inData = path.join(DATA_ROOT, 'models', 'ggml-small.bin');
+  return fs.existsSync(inData) ? inData : path.join(ROOT, 'models', 'ggml-small.bin');
+}
 const CLAUDE_BIN = findBin([
   path.join(os.homedir(), '.local/bin/claude'),
   '/opt/homebrew/bin/claude',
@@ -318,18 +323,101 @@ function formatTranscript(stdout, silences = []) {
   return turns.map((t) => `- **${stampSeconds(t.start)}** "${t.parts.join(' ')}"`).join('\n');
 }
 
+const dls = {
+  model: { status: 'idle' },
+  ffmpeg: { status: 'idle' }
+};
+
+// Static ffmpeg for macOS from evermeet.cx (the build ffmpeg.org links to).
+// Intel binary — runs via Rosetta on Apple Silicon, fine for audio extraction.
+const DL_SOURCES = {
+  model: { url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin', size: 487601967 },
+  ffmpeg: { url: 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip', size: 80000000 }
+};
+
+function startDownload(kind, dest, finalize) {
+  const src = DL_SOURCES[kind];
+  const tmp = dest + '.part';
+  fsp.unlink(tmp).catch(() => {});
+  dls[kind] = { status: 'downloading', received: 0, total: src.size };
+  execFile('/usr/bin/curl', ['-sIL', src.url], { maxBuffer: 1024 * 1024 }, (err, head) => {
+    if (!err) {
+      const lens = String(head).match(/content-length:\s*(\d+)/gi);
+      if (lens && lens.length) dls[kind].total = Number(lens[lens.length - 1].replace(/\D/g, '')) || src.size;
+    }
+  });
+  const child = spawn('/usr/bin/curl', ['-fSL', '--max-time', '7200', '-o', tmp, src.url]);
+  const tick = setInterval(async () => {
+    try { dls[kind].received = (await fsp.stat(tmp)).size; } catch { /* not yet */ }
+  }, 700);
+  child.on('close', async (code) => {
+    clearInterval(tick);
+    if (code !== 0) {
+      fsp.unlink(tmp).catch(() => {});
+      dls[kind] = { status: 'error', error: 'download failed (code ' + code + ')' };
+      return;
+    }
+    try {
+      await finalize(tmp, dest);
+      dls[kind] = { status: 'done' };
+      console.log(kind + ' downloaded');
+    } catch (err) {
+      dls[kind] = { status: 'error', error: err.message };
+    }
+  });
+  child.on('error', () => { clearInterval(tick); dls[kind] = { status: 'error', error: 'curl not available' }; });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = decodeURIComponent(url.pathname);
 
   try {
+    // One-click downloads for transcription setup: the whisper model and a
+    // static ffmpeg. POST starts, GET polls.
+    if (pathname === '/api/download-model' && req.method === 'POST') {
+      const dest = path.join(DATA_ROOT, 'models', 'ggml-small.bin');
+      if (await fileExists(dest)) { dls.model = { status: 'done' }; return send(res, 200, dls.model); }
+      if (dls.model.status === 'downloading') return send(res, 200, dls.model);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      startDownload('model', dest, (tmp, d) => fsp.rename(tmp, d));
+      return send(res, 200, dls.model);
+    }
+    if (pathname === '/api/download-model' && req.method === 'GET') {
+      if (dls.model.status !== 'downloading' && await fileExists(path.join(DATA_ROOT, 'models', 'ggml-small.bin'))) {
+        dls.model = { status: 'done' };
+      }
+      return send(res, 200, dls.model);
+    }
+    if (pathname === '/api/download-ffmpeg' && req.method === 'POST') {
+      const dest = path.join(DATA_ROOT, 'bin', 'ffmpeg');
+      if (ffmpegPath()) { dls.ffmpeg = { status: 'done' }; return send(res, 200, dls.ffmpeg); }
+      if (dls.ffmpeg.status === 'downloading') return send(res, 200, dls.ffmpeg);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      startDownload('ffmpeg', dest, async (tmp, d) => {
+        // the evermeet release is a zip holding a single 'ffmpeg' binary
+        await new Promise((resolve, reject) => {
+          execFile('/usr/bin/unzip', ['-o', '-q', tmp, '-d', path.dirname(d)],
+            (err) => (err ? reject(new Error('unzip failed')) : resolve()));
+        });
+        await fsp.unlink(tmp).catch(() => {});
+        if (!(await fileExists(d))) throw new Error('archive held no ffmpeg binary');
+        await fsp.chmod(d, 0o755);
+      });
+      return send(res, 200, dls.ffmpeg);
+    }
+    if (pathname === '/api/download-ffmpeg' && req.method === 'GET') {
+      if (dls.ffmpeg.status !== 'downloading' && ffmpegPath()) dls.ffmpeg = { status: 'done' };
+      return send(res, 200, dls.ffmpeg);
+    }
+
     // What optional helpers are installed? The UI uses this to show friendly
     // setup guidance instead of raw errors.
     if (pathname === '/api/capabilities' && req.method === 'GET') {
       return send(res, 200, {
         whisper: !!WHISPER_BIN,
-        whisperModel: await fileExists(WHISPER_MODEL),
-        ffmpeg: !!FFMPEG_BIN,
+        whisperModel: await fileExists(whisperModelPath()),
+        ffmpeg: !!ffmpegPath(),
         claude: !!CLAUDE_BIN,
         blender: !!BLENDER_BIN,
         dataRoot: DATA_ROOT
@@ -573,8 +661,8 @@ const server = http.createServer(async (req, res) => {
     // (constant memory, any length), then whisper.cpp runs locally.
     if (pathname === '/api/transcribe' && req.method === 'POST') {
       if (!WHISPER_BIN) return send(res, 503, { error: 'whisper-cli not installed (brew install whisper-cpp)' });
-      if (!FFMPEG_BIN) return send(res, 503, { error: 'ffmpeg not installed (brew install ffmpeg)' });
-      if (!(await fileExists(WHISPER_MODEL))) {
+      if (!ffmpegPath()) return send(res, 503, { error: 'ffmpeg not installed (brew install ffmpeg)' });
+      if (!(await fileExists(whisperModelPath()))) {
         return send(res, 503, { error: 'whisper model missing at models/ggml-small.bin' });
       }
       const { file } = JSON.parse(await readBody(req) || '{}');
@@ -588,7 +676,7 @@ const server = http.createServer(async (req, res) => {
         // Convert and detect silences in one pass — pauses mark speaker turns.
         const ffStderr = await new Promise((resolve, reject) => {
           execFile(
-            FFMPEG_BIN,
+            ffmpegPath(),
             ['-y', '-i', audioPath, '-af', 'silencedetect=noise=-30dB:d=0.8', '-ar', '16000', '-ac', '1', '-f', 'wav', tmp],
             { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 },
             (err, stdout, stderr) => (err ? reject(new Error('audio conversion failed')) : resolve(stderr))
@@ -598,7 +686,7 @@ const server = http.createServer(async (req, res) => {
         const stdout = await new Promise((resolve, reject) => {
           execFile(
             WHISPER_BIN,
-            ['-m', WHISPER_MODEL, '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow'],
+            ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow'],
             { timeout: 120 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 },
             (err, out) => (err ? reject(err) : resolve(out))
           );

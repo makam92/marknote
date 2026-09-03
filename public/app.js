@@ -4710,7 +4710,8 @@ $('analyzeUrl').addEventListener('keydown', (e) => {
 
 async function startAnalyze(fileBlob, url) {
   if (caps && (!caps.whisper || !caps.ffmpeg || !caps.whisperModel)) {
-    analyzeStatus(whisperHint());
+    $('analyzeModal').hidden = true;
+    openSetupModal();
     return;
   }
   try {
@@ -4768,7 +4769,7 @@ function requireCap(kind) {
   if (!caps) return true; // capabilities unknown — let the server answer
   if (kind === 'transcribe') {
     if (!caps.whisper || !caps.ffmpeg || !caps.whisperModel) {
-      alertBar(whisperHint());
+      openSetupModal();
       return false;
     }
     return true;
@@ -4779,3 +4780,84 @@ function requireCap(kind) {
   }
   return true;
 }
+
+/* ——— transcription setup: one-click ffmpeg + model, brew hint for cli ——— */
+
+let setupPoll = null;
+
+function refreshSetupRows() {
+  const states = {
+    ffmpeg: caps && caps.ffmpeg,
+    model: caps && caps.whisperModel,
+    whisper: caps && caps.whisper
+  };
+  document.querySelectorAll('.setup-row').forEach((row) => {
+    const ok = !!states[row.dataset.kind];
+    const btn = row.querySelector('.setup-dl');
+    const cmd = row.querySelector('code');
+    if (btn) btn.hidden = ok;
+    if (cmd) cmd.hidden = ok;
+    row.querySelector('.setup-ok').hidden = !ok;
+  });
+}
+
+function openSetupModal() {
+  refreshSetupRows();
+  $('setupProgressWrap').hidden = true;
+  $('setupStatus').hidden = true;
+  $('setupModal').hidden = false;
+}
+
+$('setupClose').addEventListener('click', () => {
+  clearInterval(setupPoll);
+  setupPoll = null;
+  $('setupModal').hidden = true;
+});
+
+$('setupBrewCmd').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText('brew install whisper-cpp');
+    $('setupStatus').textContent = 'Command copied — run it in Terminal, then reopen this dialog.';
+    $('setupStatus').hidden = false;
+  } catch (e) { /* clipboard blocked */ }
+});
+
+document.querySelectorAll('.setup-dl').forEach((btn) =>
+  btn.addEventListener('click', async () => {
+    const kind = btn.dataset.kind;
+    btn.disabled = true;
+    $('setupProgressWrap').hidden = false;
+    $('setupStatus').hidden = true;
+    const ep = kind === 'model' ? '/api/download-model' : '/api/download-ffmpeg';
+    await fetch(ep, { method: 'POST' }).catch(() => {});
+    clearInterval(setupPoll);
+    setupPoll = setInterval(async () => {
+      let st;
+      try { st = await fetch(ep).then((r) => r.json()); } catch (e) { return; }
+      if (st.status === 'downloading') {
+        const pct = st.total ? Math.min(100, Math.round((st.received / st.total) * 100)) : 0;
+        $('setupProgress').style.width = pct + '%';
+        $('setupPct').textContent = `${pct}% — ${Math.round((st.received || 0) / 1048576)} / ${Math.round((st.total || 0) / 1048576)} MB`;
+      } else if (st.status === 'done') {
+        clearInterval(setupPoll);
+        setupPoll = null;
+        if (caps) caps[kind === 'model' ? 'whisperModel' : 'ffmpeg'] = true;
+        $('setupProgress').style.width = '100%';
+        $('setupPct').textContent = 'Done ✓';
+        btn.disabled = false;
+        refreshSetupRows();
+        const all = caps && caps.ffmpeg && caps.whisperModel && caps.whisper;
+        $('setupStatus').textContent = all
+          ? 'All set — transcription is ready. Run your action again!'
+          : 'Downloaded ✓ — finish the remaining steps above.';
+        $('setupStatus').hidden = false;
+      } else if (st.status === 'error') {
+        clearInterval(setupPoll);
+        setupPoll = null;
+        btn.disabled = false;
+        $('setupStatus').textContent = 'Download failed: ' + (st.error || 'unknown') + ' — try again.';
+        $('setupStatus').hidden = false;
+      }
+    }, 1000);
+  })
+);

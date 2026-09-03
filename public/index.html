@@ -396,6 +396,35 @@
   </div>
 </div>
 
+<div id="setupModal" class="ts-modal" hidden>
+  <div class="ts-box model-box">
+    <header class="ts-head"><strong>Set up transcription</strong><span class="ts-spacer"></span><button id="setupClose">Close</button></header>
+    <div class="model-body">
+      <p>Three pieces make meeting transcription work — all local, one-time setup:</p>
+      <div class="setup-row" data-kind="ffmpeg">
+        <div class="setup-info"><b>ffmpeg</b><span class="setup-sub">extracts audio from recordings</span></div>
+        <button class="setup-dl btn-accent" data-kind="ffmpeg">Download ~80 MB</button>
+        <span class="setup-ok" hidden>✓ Installed</span>
+      </div>
+      <div class="setup-row" data-kind="model">
+        <div class="setup-info"><b>Whisper model</b><span class="setup-sub">the speech recognition brain (ggml-small)</span></div>
+        <button class="setup-dl btn-accent" data-kind="model">Download 487 MB</button>
+        <span class="setup-ok" hidden>✓ Installed</span>
+      </div>
+      <div class="setup-row" data-kind="whisper">
+        <div class="setup-info"><b>whisper-cli</b><span class="setup-sub">install via Homebrew — click to copy the command</span></div>
+        <code id="setupBrewCmd" title="Click to copy">brew install whisper-cpp</code>
+        <span class="setup-ok" hidden>✓ Installed</span>
+      </div>
+      <div id="setupProgressWrap" class="model-progress-wrap" hidden>
+        <div id="setupProgress" class="model-progress"></div>
+        <div id="setupPct" class="model-pct">0%</div>
+      </div>
+      <div id="setupStatus" class="model-status" hidden></div>
+    </div>
+  </div>
+</div>
+
 <div id="lockModal" class="ts-modal" hidden>
   <div class="ts-box lock-box">
     <header class="ts-head"><strong>Lock note</strong><span class="ts-spacer"></span></header>
