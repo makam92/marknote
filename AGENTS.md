@@ -191,7 +191,7 @@ The transcribe button only shows while the note lacks `## Transcript`.
 "☑ Todos" page (sidebar) renders them grouped by date. Line format:
 
 ```markdown
-- [ ] Call Swedbank Pay about fas 0 @2026-08-27 !09:30 [[Some source note]]
+- [ ] Book the yearly service @2026-08-27 !09:30 [[Some source note]]
 ```
 
 - `@YYYY-MM-DD` — due date (groups: Overdue/Today/Tomorrow/This week/Later)

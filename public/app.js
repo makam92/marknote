@@ -3653,7 +3653,7 @@ let presenterH = 0;
 let presenterFile = null;
 
 
-// "3 · Motorn: Swedbank Pay" — option labels for the jump-to-slide dropdown
+// "3 · Key points" — option labels for the jump-to-slide dropdown
 function slideTitle(chunk, i) {
   const h = (chunk || '').match(/^#{1,4}\s+(.+)$/m);
   let t = h ? h[1] : ((chunk || '').split('\n').find((l) => l.trim() && !l.trim().startsWith('<!--')) || '');
