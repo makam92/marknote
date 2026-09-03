@@ -9,9 +9,16 @@ server in an Electron shell.
 ## Install (no tools needed)
 
 Grab **Marknote-mac.zip** from a release (or from whoever built it), unzip,
-drag **Marknote.app** to Applications and open it. First launch: right-click →
-Open to get past Gatekeeper (the app is unsigned). Your notes live as plain
-markdown in **~/Documents/Marknote/**.
+drag **Marknote.app** to Applications and open it. The app is unsigned, so
+Gatekeeper objects on first launch:
+
+- **macOS 15 (Sequoia) and later**: the dialog has no Open option — press
+  Done, then System Settings → Privacy & Security → scroll to the bottom →
+  "Marknote was blocked…" → **Open Anyway**, then launch again
+- **Older macOS**: right-click the app → Open → Open
+- Terminal alternative: `xattr -d com.apple.quarantine /Applications/Marknote.app`
+
+Your notes live as plain markdown in **~/Documents/Marknote/**.
 
 Optional AI extras (everything else works without them):
 
