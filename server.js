@@ -316,6 +316,42 @@ const server = http.createServer(async (req, res) => {
   const pathname = decodeURIComponent(url.pathname);
 
   try {
+    // Download a media URL into attachments (for "Analyze recording" — e.g.
+    // a direct link to an mp4/m4a). Auth-walled links (Teams/SharePoint) won't
+    // work; download the file first in that case.
+    if (pathname === '/api/fetch-media' && req.method === 'POST') {
+      const { url: mediaUrl } = JSON.parse(await readBody(req) || '{}');
+      let parsed;
+      try { parsed = new URL(mediaUrl); } catch { return send(res, 400, { error: 'bad url' }); }
+      if (!/^https?:$/.test(parsed.protocol)) return send(res, 400, { error: 'only http(s) urls' });
+      let name = decodeURIComponent(parsed.pathname.split('/').pop() || '')
+        .replace(/[<>:"|?*]/g, '').trim().replace(/[\s()]+/g, '-');
+      if (!name || name.startsWith('.')) name = 'recording-' + Date.now();
+      const tmp = path.join(os.tmpdir(), `marknote-media-${Date.now()}`);
+      try {
+        await new Promise((resolve, reject) => {
+          execFile('/usr/bin/curl', ['-fsSL', '--max-time', '600', '--max-filesize', '2147483648', '-o', tmp, mediaUrl],
+            { maxBuffer: 1024 * 1024 },
+            (err) => (err ? reject(new Error('download failed')) : resolve()));
+        });
+        const stat = await fsp.stat(tmp);
+        if (!stat.size) throw new Error('empty download');
+        if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += '.mp4'; // best-effort extension
+        // avoid overwriting an existing attachment
+        let final = name;
+        let i = 1;
+        while (await fileExists(path.join(ATTACH_DIR, final))) {
+          final = name.replace(/(\.[^.]*)$/, `-${++i}$1`);
+        }
+        await fsp.mkdir(ATTACH_DIR, { recursive: true });
+        await fsp.rename(tmp, path.join(ATTACH_DIR, final));
+        return send(res, 200, { file: final, size: stat.size });
+      } catch (err) {
+        fsp.unlink(tmp).catch(() => {});
+        return send(res, 500, { error: String(err.message).slice(0, 200) });
+      }
+    }
+
     // Note templates: plain .md files in templates/ (front-matter title = name).
     if (pathname === '/api/templates' && req.method === 'GET') {
       await fsp.mkdir(TEMPLATES_DIR, { recursive: true });

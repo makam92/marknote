@@ -26,6 +26,7 @@
       <button data-create="slides"><span class="cm-icon">📊</span> Presentation</button>
       <button data-create="meeting"><span class="cm-icon">🎙</span> Meeting recording</button>
       <button id="fromTemplateBtn"><span class="cm-icon">📄</span> From template…</button>
+      <button id="analyzeRecBtn"><span class="cm-icon">🎧</span> Analyze recording…</button>
     </div>
   </header>
 
@@ -356,6 +357,26 @@
       <div class="pres-label">Speaker notes</div>
       <div id="presNotes" class="pres-notes"></div>
     </aside>
+  </div>
+</div>
+
+<div id="analyzeModal" class="ts-modal" hidden>
+  <div class="ts-box analyze-box">
+    <header class="ts-head"><strong>Analyze a recording</strong><span class="ts-spacer"></span><button id="analyzeCancel">Cancel</button></header>
+    <div class="analyze-body">
+      <div id="analyzeDrop" class="analyze-drop">
+        <div class="analyze-drop-icon">🎧</div>
+        <div><b>Drop an audio/video file here</b> — or click to pick one</div>
+        <div class="analyze-hint">Teams exports, voice memos, mp4/m4a/mp3/webm…</div>
+      </div>
+      <div class="analyze-or">or</div>
+      <div class="analyze-url-row">
+        <input id="analyzeUrl" type="text" placeholder="Paste a direct media link (https://…/meeting.mp4)" autocomplete="off" spellcheck="false">
+        <button id="analyzeUrlGo" class="btn-accent">Fetch</button>
+      </div>
+      <div id="analyzeStatus" class="analyze-status" hidden></div>
+      <div class="analyze-hint">A meeting note is created and transcription + Claude summary start automatically. Links behind logins (Teams/SharePoint) can't be fetched — download the file first.</div>
+    </div>
   </div>
 </div>
 

@@ -256,10 +256,20 @@ function embedVideos(el) {
         embed.appendChild(btn);
       }
     } else if (isFile) {
-      embed = document.createElement('video');
-      embed.controls = true;
-      embed.preload = 'metadata';
-      embed.src = href;
+      embed = document.createElement('span');
+      embed.className = 'video-embed-wrap';
+      const vid = document.createElement('video');
+      vid.controls = true;
+      vid.preload = 'metadata';
+      vid.src = href;
+      embed.appendChild(vid);
+      if (state.current && !state.current.body.includes('## Transcript')) {
+        const btn = document.createElement('button');
+        btn.className = 'transcribe-btn';
+        btn.dataset.src = href;
+        btn.textContent = 'Transcribe & summarize';
+        embed.appendChild(btn);
+      }
     } else {
       embed = document.createElement('div');
       embed.className = 'video-embed';
@@ -4653,4 +4663,82 @@ async function persistImageWidth(img, w) {
   $('noteView').closest('.main').scrollTop = scroll;
   imgGrip.hidden = true;
   gripImg = null;
+}
+
+/* ——— analyze recording: drop a file / paste a link → note + transcript ——— */
+
+const analyzeFile = document.createElement('input');
+analyzeFile.type = 'file';
+analyzeFile.accept = 'audio/*,video/*,.weba,.m4a,.mp3,.wav,.ogg,.mp4,.webm,.mov,.m4v';
+
+$('analyzeRecBtn').addEventListener('click', () => {
+  $('createMenu').hidden = true;
+  $('analyzeUrl').value = '';
+  $('analyzeStatus').hidden = true;
+  $('analyzeModal').hidden = false;
+});
+$('analyzeCancel').addEventListener('click', () => { $('analyzeModal').hidden = true; });
+
+function analyzeStatus(msg) {
+  $('analyzeStatus').textContent = msg;
+  $('analyzeStatus').hidden = false;
+}
+
+$('analyzeDrop').addEventListener('click', () => analyzeFile.click());
+analyzeFile.addEventListener('change', () => {
+  if (analyzeFile.files[0]) startAnalyze(analyzeFile.files[0], null);
+  analyzeFile.value = '';
+});
+$('analyzeDrop').addEventListener('dragover', (e) => {
+  e.preventDefault();
+  $('analyzeDrop').classList.add('over');
+});
+$('analyzeDrop').addEventListener('dragleave', () => $('analyzeDrop').classList.remove('over'));
+$('analyzeDrop').addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('analyzeDrop').classList.remove('over');
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) startAnalyze(f, null);
+});
+$('analyzeUrlGo').addEventListener('click', () => {
+  const u = $('analyzeUrl').value.trim();
+  if (u) startAnalyze(null, u);
+});
+$('analyzeUrl').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('analyzeUrlGo').click();
+});
+
+async function startAnalyze(fileBlob, url) {
+  try {
+    let attach;
+    if (fileBlob) {
+      analyzeStatus(`Uploading ${fileBlob.name}…`);
+      attach = (await api.upload(fileBlob, fileBlob.name)).file;
+    } else {
+      analyzeStatus('Downloading…');
+      const res = await fetch('/api/fetch-media', { method: 'POST', body: JSON.stringify({ url }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'download failed');
+      attach = data.file;
+    }
+    analyzeStatus('Creating note…');
+    const title = attach.replace(/\.[^.]*$/, '').replace(/[-_]+/g, ' ').trim() || 'Recording';
+    const { file } = await api.create(title);
+    let rawN = await api.raw(file);
+    rawN = setTagsInRaw(rawN, ['Meeting']);
+    rawN = rawN.replace(/\n*$/, `\n[Recording](@attachment/${attach})\n`);
+    await api.save(file, rawN);
+    state.notes = await api.list();
+    renderTags();
+    renderList();
+    $('analyzeModal').hidden = true;
+    openNote(file);
+    // kick off transcription via the note's own button
+    setTimeout(() => {
+      const btn = $('rendered').querySelector('.transcribe-btn');
+      if (btn) transcribeAudio(btn.dataset.src, btn);
+    }, 400);
+  } catch (err) {
+    analyzeStatus('Failed: ' + String(err.message || err).slice(0, 160));
+  }
 }

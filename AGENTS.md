@@ -183,7 +183,11 @@ title: 'Meeting 2026-08-26 14:00'
 </details>
 ```
 
-The transcribe button only shows while the note lacks `## Transcript`.
+The transcribe button only shows while the note lacks `## Transcript` (audio
+and video embeds alike). "+ Create → Analyze recording…" takes a dropped
+audio/video file or a direct media URL (POST `/api/fetch-media` downloads it),
+creates a Meeting note and starts transcription + summary automatically —
+for analyzing meetings you weren't at.
 
 ## Todos
 
