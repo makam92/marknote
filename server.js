@@ -696,7 +696,9 @@ const server = http.createServer(async (req, res) => {
         // Stream whisper's output so the UI can show real progress from the
         // transcript timestamps as they appear.
         const stdout = await new Promise((resolve, reject) => {
-          const child = spawn(WHISPER_BIN, ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow']);
+          // -mc 0: no text context between segments — prevents the repetition
+          // loops whisper falls into on long noisy recordings
+          const child = spawn(WHISPER_BIN, ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow', '-mc', '0']);
           let out = '';
           const killer = setTimeout(() => child.kill('SIGKILL'), 120 * 60 * 1000);
           child.stdout.on('data', (chunk) => {
