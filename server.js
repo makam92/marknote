@@ -12,7 +12,7 @@ const { execFile, spawn } = require('child_process');
 const ROOT = __dirname; // code root (public/, vendored libs)
 // Data lives next to the code in repo/dev mode, but in ~/Documents/Marknote
 // when running from a bundled .app (the bundle must stay read-only).
-const BUNDLED = __dirname.includes('.app/Contents/Resources');
+const BUNDLED = __dirname.includes('.app/Contents/Resources') || /[\\/]resources[\\/]app$/.test(__dirname);
 const DATA_ROOT = process.env.MARKNOTE_DATA
   || (BUNDLED ? path.join(os.homedir(), 'Documents', 'Marknote') : ROOT);
 const NOTES_DIR = path.join(DATA_ROOT, 'notes');
@@ -49,6 +49,36 @@ const MIME = {
   '.gltf': 'model/gltf+json'
 };
 
+const IS_WIN = process.platform === 'win32';
+const CURL = IS_WIN ? 'curl' : '/usr/bin/curl';
+
+// Windows 10+ ships bsdtar which reads and writes zip archives — used where
+// macOS uses /usr/bin/zip & unzip.
+function zipCreate(dest, cwd, items) {
+  return new Promise((resolve, reject) => {
+    const args = IS_WIN
+      ? ['-a', '-c', '-f', dest, ...items]
+      : ['-r', '-q', dest, ...items, '-x', '*.DS_Store'];
+    execFile(IS_WIN ? 'tar' : '/usr/bin/zip', args, { cwd, maxBuffer: 1024 * 1024 },
+      (err) => (err ? reject(new Error('zip failed: ' + err.message)) : resolve()));
+  });
+}
+function zipList(file) {
+  return new Promise((resolve) => {
+    const cmd = IS_WIN ? 'tar' : '/usr/bin/unzip';
+    const args = IS_WIN ? ['-tf', file] : ['-Z1', file];
+    execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024 }, (err, out) => resolve(err ? '' : String(out)));
+  });
+}
+function zipExtract(file, destDir, patterns) {
+  return new Promise((resolve, reject) => {
+    const cmd = IS_WIN ? 'tar' : '/usr/bin/unzip';
+    const args = IS_WIN ? ['-xf', file, '-C', destDir, ...patterns] : ['-o', '-q', file, ...patterns, '-d', destDir];
+    execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024 },
+      (err) => (err ? reject(new Error('extract failed')) : resolve()));
+  });
+}
+
 // GUI apps get a minimal PATH — resolve helper binaries by absolute path.
 function findBin(candidates) {
   for (const p of candidates) {
@@ -60,13 +90,31 @@ function findBin(candidates) {
   return null;
 }
 
-const WHISPER_BIN = findBin(['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli']);
-function ffmpegPath() {
-  const inData = path.join(DATA_ROOT, 'bin', 'ffmpeg');
-  if (fs.existsSync(inData)) return inData;
-  return findBin(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
+const { execSync } = require('child_process');
+function findInPath(name) {
+  try {
+    const out = execSync((IS_WIN ? 'where ' : 'command -v ') + name, { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().split(/\r?\n/)[0].trim();
+    return out || null;
+  } catch { return null; }
 }
-const BLENDER_BIN = findBin(['/Applications/Blender.app/Contents/MacOS/Blender', '/opt/homebrew/bin/blender']);
+
+function whisperBinPath() {
+  const inData = path.join(DATA_ROOT, 'bin', IS_WIN ? 'whisper-cli.exe' : 'whisper-cli');
+  if (fs.existsSync(inData)) return inData;
+  return findBin(['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli'])
+    || findInPath('whisper-cli');
+}
+function ffmpegPath() {
+  const inData = path.join(DATA_ROOT, 'bin', IS_WIN ? 'ffmpeg.exe' : 'ffmpeg');
+  if (fs.existsSync(inData)) return inData;
+  return findBin(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']) || findInPath('ffmpeg');
+}
+const BLENDER_BIN = findBin([
+  '/Applications/Blender.app/Contents/MacOS/Blender',
+  '/opt/homebrew/bin/blender',
+  'C:\\Program Files\\Blender Foundation\\Blender 4.0\\blender.exe'
+]) || findInPath('blender');
 function whisperModelPath() {
   const inData = path.join(DATA_ROOT, 'models', 'ggml-small.bin');
   return fs.existsSync(inData) ? inData : path.join(ROOT, 'models', 'ggml-small.bin');
@@ -75,7 +123,7 @@ const CLAUDE_BIN = findBin([
   path.join(os.homedir(), '.local/bin/claude'),
   '/opt/homebrew/bin/claude',
   '/usr/local/bin/claude'
-]);
+]) || findInPath('claude');
 
 // Filenames arrive URL-decoded; anything that could escape the notes dir is rejected.
 function safeName(name) {
@@ -334,7 +382,9 @@ const dls = {
 // Intel binary — runs via Rosetta on Apple Silicon, fine for audio extraction.
 const DL_SOURCES = {
   model: { url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin', size: 487601967 },
-  ffmpeg: { url: 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip', size: 80000000 }
+  ffmpeg: IS_WIN
+    ? { url: 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip', size: 180000000 }
+    : { url: 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip', size: 80000000 }
 };
 
 function startDownload(kind, dest, finalize) {
@@ -342,13 +392,13 @@ function startDownload(kind, dest, finalize) {
   const tmp = dest + '.part';
   fsp.unlink(tmp).catch(() => {});
   dls[kind] = { status: 'downloading', received: 0, total: src.size };
-  execFile('/usr/bin/curl', ['-sIL', src.url], { maxBuffer: 1024 * 1024 }, (err, head) => {
+  execFile(CURL, ['-sIL', src.url], { maxBuffer: 1024 * 1024 }, (err, head) => {
     if (!err) {
       const lens = String(head).match(/content-length:\s*(\d+)/gi);
       if (lens && lens.length) dls[kind].total = Number(lens[lens.length - 1].replace(/\D/g, '')) || src.size;
     }
   });
-  const child = spawn('/usr/bin/curl', ['-fSL', '--max-time', '7200', '-o', tmp, src.url]);
+  const child = spawn(CURL, ['-fSL', '--max-time', '7200', '-o', tmp, src.url]);
   const tick = setInterval(async () => {
     try { dls[kind].received = (await fsp.stat(tmp)).size; } catch { /* not yet */ }
   }, 700);
@@ -397,14 +447,30 @@ const server = http.createServer(async (req, res) => {
       if (dls.ffmpeg.status === 'downloading') return send(res, 200, dls.ffmpeg);
       await fsp.mkdir(path.dirname(dest), { recursive: true });
       startDownload('ffmpeg', dest, async (tmp, d) => {
-        // the evermeet release is a zip holding a single 'ffmpeg' binary
-        await new Promise((resolve, reject) => {
-          execFile('/usr/bin/unzip', ['-o', '-q', tmp, '-d', path.dirname(d)],
-            (err) => (err ? reject(new Error('unzip failed')) : resolve()));
-        });
+        // mac (evermeet): single 'ffmpeg' at the zip root.
+        // windows (BtbN): nested folder with bin/ffmpeg.exe — extract to a
+        // scratch dir and fish the binary out.
+        const scratch = tmp + '-x';
+        await fsp.mkdir(scratch, { recursive: true });
+        await zipExtract(tmp, scratch, []);
         await fsp.unlink(tmp).catch(() => {});
-        if (!(await fileExists(d))) throw new Error('archive held no ffmpeg binary');
-        await fsp.chmod(d, 0o755);
+        const wanted = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg';
+        async function findFile(dir) {
+          for (const e of await fsp.readdir(dir, { withFileTypes: true })) {
+            const full = path.join(dir, e.name);
+            if (e.isFile() && e.name === wanted) return full;
+            if (e.isDirectory()) {
+              const hit = await findFile(full);
+              if (hit) return hit;
+            }
+          }
+          return null;
+        }
+        const found = await findFile(scratch);
+        if (!found) throw new Error('archive held no ffmpeg binary');
+        await fsp.copyFile(found, d);
+        await fsp.rm(scratch, { recursive: true, force: true });
+        if (!IS_WIN) await fsp.chmod(d, 0o755);
       });
       return send(res, 200, dls.ffmpeg);
     }
@@ -417,11 +483,12 @@ const server = http.createServer(async (req, res) => {
     // setup guidance instead of raw errors.
     if (pathname === '/api/capabilities' && req.method === 'GET') {
       return send(res, 200, {
-        whisper: !!WHISPER_BIN,
+        whisper: !!whisperBinPath(),
         whisperModel: await fileExists(whisperModelPath()),
         ffmpeg: !!ffmpegPath(),
         claude: !!CLAUDE_BIN,
         blender: !!BLENDER_BIN,
+        platform: process.platform,
         dataRoot: DATA_ROOT
       });
     }
@@ -440,7 +507,7 @@ const server = http.createServer(async (req, res) => {
       const tmp = path.join(os.tmpdir(), `marknote-media-${Date.now()}`);
       try {
         await new Promise((resolve, reject) => {
-          execFile('/usr/bin/curl', ['-fsSL', '--max-time', '600', '--max-filesize', '2147483648', '-o', tmp, mediaUrl],
+          execFile(CURL, ['-fsSL', '--max-time', '600', '--max-filesize', '2147483648', '-o', tmp, mediaUrl],
             { maxBuffer: 1024 * 1024 },
             (err) => (err ? reject(new Error('download failed')) : resolve()));
         });
@@ -501,11 +568,7 @@ const server = http.createServer(async (req, res) => {
       // macOS's zip can't stream to stdout — write a temp zip, stream the file
       const stamp = new Date().toISOString().slice(0, 10);
       const tmp = path.join(os.tmpdir(), `marknote-backup-${Date.now()}.zip`);
-      await new Promise((resolve, reject) => {
-        execFile('/usr/bin/zip', ['-r', '-q', tmp, 'notes', 'attachments', 'templates', '-x', '*.DS_Store'],
-          { cwd: DATA_ROOT, maxBuffer: 1024 * 1024 },
-          (err) => (err ? reject(err) : resolve()));
-      }).catch((err) => { throw new Error('zip failed: ' + err.message); });
+      await zipCreate(tmp, DATA_ROOT, ['notes', 'attachments', 'templates']);
       const size = (await fsp.stat(tmp)).size;
       res.writeHead(200, {
         'Content-Type': 'application/zip',
@@ -525,20 +588,16 @@ const server = http.createServer(async (req, res) => {
       if (!body.length) return send(res, 400, { error: 'empty upload' });
       const tmp = path.join(os.tmpdir(), `marknote-restore-${Date.now()}.zip`);
       await fsp.writeFile(tmp, body);
-      const run = (cmd, args, opts) => new Promise((resolve, reject) => {
-        execFile(cmd, args, opts, (err, stdout, stderr) => (err ? reject(Object.assign(err, { stderr })) : resolve(stdout)));
-      });
       try {
         // does the zip contain anything we accept?
-        const listing = await run('/usr/bin/unzip', ['-Z1', tmp]).catch(() => '');
+        const listing = await zipList(tmp);
         const wanted = listing.split('\n').filter((l) => /^(notes|attachments|templates)\//.test(l) && !l.endsWith('/'));
         if (!wanted.length) return send(res, 400, { error: 'zip contains no notes/ or attachments/' });
         const backups = path.join(DATA_ROOT, '.backups');
         await fsp.mkdir(backups, { recursive: true });
         const safety = `pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-        await run('/usr/bin/zip', ['-r', '-q', path.join(backups, safety), 'notes', 'attachments', 'templates', '-x', '*.DS_Store'], { cwd: DATA_ROOT });
-        // exit code 11 = nothing matched, already excluded above; -o overwrites
-        await run('/usr/bin/unzip', ['-o', '-q', tmp, 'notes/*', 'attachments/*', 'templates/*', '-d', DATA_ROOT]);
+        await zipCreate(path.join(backups, safety), DATA_ROOT, ['notes', 'attachments', 'templates']);
+        await zipExtract(tmp, DATA_ROOT, ['notes/*', 'attachments/*', 'templates/*']);
         return send(res, 200, { ok: true, files: wanted.length, safety: '.backups/' + safety });
       } catch (err) {
         console.error('restore:', err.message);
@@ -666,7 +725,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/transcribe' && req.method === 'POST') {
-      if (!WHISPER_BIN) return send(res, 503, { error: 'whisper-cli not installed (brew install whisper-cpp)' });
+      if (!whisperBinPath()) return send(res, 503, { error: 'whisper-cli not installed (brew install whisper-cpp)' });
       if (!ffmpegPath()) return send(res, 503, { error: 'ffmpeg not installed (brew install ffmpeg)' });
       if (!(await fileExists(whisperModelPath()))) {
         return send(res, 503, { error: 'whisper model missing at models/ggml-small.bin' });
@@ -698,7 +757,7 @@ const server = http.createServer(async (req, res) => {
         const stdout = await new Promise((resolve, reject) => {
           // -mc 0: no text context between segments — prevents the repetition
           // loops whisper falls into on long noisy recordings
-          const child = spawn(WHISPER_BIN, ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow', '-mc', '0']);
+          const child = spawn(whisperBinPath(), ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow', '-mc', '0']);
           let out = '';
           const killer = setTimeout(() => child.kill('SIGKILL'), 120 * 60 * 1000);
           child.stdout.on('data', (chunk) => {
@@ -1118,6 +1177,13 @@ try { remindState = JSON.parse(fs.readFileSync(REMIND_STATE, 'utf8')); } catch {
 // window + a directly-played chime depend on no settings at all. The dialog's
 // "Klart ✓" button marks the todo done right from the reminder.
 function notify(text, line) {
+  if (IS_WIN) {
+    const safeW = String(text).replace(/[`"$]/g, '').slice(0, 200);
+    execFile('powershell', ['-NoProfile', '-Command',
+      `[System.Media.SystemSounds]::Exclamation.Play(); Add-Type -AssemblyName PresentationFramework | Out-Null; [System.Windows.MessageBox]::Show('${safeW.replace(/'/g, "''")}', 'Marknote — todo reminder') | Out-Null`
+    ], () => {});
+    return;
+  }
   if (process.platform !== 'darwin') return;
   const safe = String(text).replace(/[\\"]/g, '').slice(0, 200);
   execFile('/usr/bin/afplay', ['/System/Library/Sounds/Glass.aiff'], () => {});

@@ -20,6 +20,12 @@ Gatekeeper objects on first launch:
 
 Your notes live as plain markdown in **~/Documents/Marknote/**.
 
+**Windows (experimental)**: download **Marknote-win.zip**, unzip anywhere and
+run `Marknote.exe` (SmartScreen: More info → Run anyway). Notes live in
+`Documents\Marknote`. Untested by the maintainers — reports welcome! Optional
+extras on Windows: ffmpeg downloads in-app; whisper-cli comes from the
+whisper.cpp releases page (put it in `Documents\Marknote\bin\`).
+
 Optional AI extras (everything else works without them):
 
 - Transcription: `brew install whisper-cpp ffmpeg` + put `ggml-small.bin`

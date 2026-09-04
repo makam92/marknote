@@ -4808,6 +4808,11 @@ function refreshSetupRows() {
 }
 
 function openSetupModal() {
+  if (caps && caps.platform === 'win32') {
+    document.querySelector('.setup-row[data-kind="whisper"] .setup-sub').textContent =
+      'download Windows binaries from whisper.cpp releases → Documents/Marknote/bin/';
+    $('setupBrewCmd').textContent = 'Open whisper.cpp releases';
+  }
   refreshSetupRows();
   $('setupProgressWrap').hidden = true;
   $('setupStatus').hidden = true;
@@ -4821,6 +4826,10 @@ $('setupClose').addEventListener('click', () => {
 });
 
 $('setupBrewCmd').addEventListener('click', async () => {
+  if (caps && caps.platform === 'win32') {
+    window.open('https://github.com/ggml-org/whisper.cpp/releases', '_blank');
+    return;
+  }
   try {
     await navigator.clipboard.writeText('brew install whisper-cpp');
     $('setupStatus').textContent = 'Command copied — run it in Terminal, then reopen this dialog.';
