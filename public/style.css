@@ -2358,3 +2358,77 @@ body.img-resizing * { cursor: nwse-resize !important; }
 .setup-ok { color: #2e7d43; font-weight: 700; font-size: 12.5px; white-space: nowrap; }
 .setup-dl { white-space: nowrap; font-size: 12.5px; }
 #setupBrewCmd { cursor: pointer; }
+
+/* ——— Actions menu (structured) ——— */
+.actions-btn { border-color: var(--accent); color: var(--accent); font-weight: 600; letter-spacing: 0; }
+.note-menu { min-width: 250px; padding: 6px; }
+.note-menu .cmd-sec {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 9px 12px 4px;
+}
+.note-menu .cmd-item { display: flex; align-items: center; gap: 10px; }
+.note-menu .cmd-item .ci { width: 18px; text-align: center; font-size: 13px; opacity: 0.75; }
+.note-menu .cmd-item.danger, .note-menu .cmd-item.danger .ci { color: #c0392b; }
+.note-menu .cmd-item.danger:hover { background: #c0392b1a; }
+
+/* ——— keyboard cheat sheet ——— */
+.sc-box { width: min(780px, calc(100% - 32px)); }
+.sc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 30px 52px;
+  padding: 20px 26px 26px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.sc-grid h4 {
+  margin: 0 0 13px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.sc-grid .sc-note { text-transform: none; letter-spacing: 0; font-weight: normal; }
+.sc-grid dl { margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.sc-grid dl > div { display: flex; align-items: baseline; gap: 16px; }
+.sc-grid dt { flex: 0 0 104px; white-space: nowrap; }
+.sc-grid dd { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink-soft); }
+.hint-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.hint-link:hover { border: none; text-decoration: underline; }
+@media (max-width: 700px) { .sc-grid { grid-template-columns: 1fr; } }
+
+/* ——— find-in-editor backdrop ———
+   A mirror div behind the (transparent-background) textarea. It must copy
+   #editor's text metrics EXACTLY — font, line-height, padding, border box —
+   so the <mark>s painted here line up under the textarea's own glyphs. */
+.ed-stack { position: relative; }
+.ed-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: transparent;
+  background: var(--card);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+.ed-stack #editor { position: relative; background: transparent; width: 100%; }
+.ed-backdrop mark.find-hit { color: transparent; }
+.ed-backdrop mark.find-hit.current { color: transparent; }

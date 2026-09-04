@@ -70,6 +70,10 @@ Body markdown…
   three alignment buttons write/toggle exactly this syntax.
 - Colored text: inline HTML `<span style="color:#2b6cb0">text</span>` — renders in
   notes, slides and previews (GitHub's web view strips inline styles, though).
+- Tables: GFM pipe tables. In the editor, Tab/Shift+Tab jumps between cells and
+  reformats the table; Tab past the last cell appends a row. A table row is one
+  text line, so a line break **inside a cell** must be written as `<br>` —
+  Shift+Enter in the editor types it for you.
 
 ## Presentations
 

@@ -282,7 +282,10 @@ async function serveStatic(res, baseDir, relPath, range) {
   const headers = {
     'Content-Type': type,
     'Content-Length': end - start + 1,
-    'Accept-Ranges': 'bytes'
+    'Accept-Ranges': 'bytes',
+    // local app: correctness beats caching — stale app.js/index.html caused
+    // "restart didn't help" mysteries
+    'Cache-Control': 'no-store'
   };
   if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
   res.writeHead(status, headers);

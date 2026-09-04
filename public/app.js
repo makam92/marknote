@@ -734,11 +734,16 @@ function showNote(note) {
   $('pinBtn').classList.toggle('pinned', !!note.pinned);
   $('pinBtn').title = note.pinned ? 'Unpin' : 'Pin — keep this note at the top of the list';
   $('noteMenu').hidden = true;
-  $('deckBtn').hidden = !isDeckNote(note);
-  $('presenterBtn').hidden = !isDeckNote(note);
+  const deckish = isDeckNote(note);
+  $('deckBtn').hidden = !deckish;
+  $('presenterBtn').hidden = !deckish;
+  // primary action follows the note type: Present on decks, Edit otherwise
+  $('presentBtn').hidden = !deckish;
+  $('editBtn').classList.toggle('btn-accent', !deckish);
   // any note with real content can yield todos — plans and research included
   $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80 || isLockedBody(note.body);
   $('dlTranscriptBtn').hidden = !note.body.includes('## Transcript') || isLockedBody(note.body);
+  syncMenuSections();
   updateLockMenu(note);
   closeFind();
   renderBacklinks(note);
@@ -796,6 +801,7 @@ async function enterEdit() {
   $('backlinks').hidden = true;
   $('editBtn').textContent = 'Preview';
   $('editor').focus();
+  if (!$('findBar').hidden && $('findInput').value) applyFind($('findInput').value);
 }
 
 async function exitEdit({ save }) {
@@ -813,6 +819,7 @@ async function exitEdit({ save }) {
   renderHeaderTags(state.current);
   renderNoteBody(state.current);
   renderBacklinks(state.current);
+  if (!$('findBar').hidden && $('findInput').value) applyFind($('findInput').value);
   if (pendingRelock === state.current.file) {
     pendingRelock = null;
     autoLock(state.current.file);
@@ -850,7 +857,7 @@ let deleteArmed = false;
 function resetDelete() {
   deleteArmed = false;
   const btn = $('deleteBtn');
-  btn.textContent = 'Delete';
+  btn.querySelector('.dl').textContent = 'Delete';
   btn.classList.remove('confirming');
 }
 
@@ -858,7 +865,7 @@ async function handleDelete() {
   const btn = $('deleteBtn');
   if (!deleteArmed) {
     deleteArmed = true;
-    btn.textContent = 'Really delete?';
+    btn.querySelector('.dl').textContent = 'Really delete?';
     btn.classList.add('confirming');
     setTimeout(resetDelete, 3000);
     return;
@@ -2116,9 +2123,19 @@ dcEl().addEventListener('blur', closeSuggest);
 dcEl().addEventListener('scroll', closeSuggest);
 dcEl().addEventListener('keydown', (e) => {
   if (handleSuggestKeys(e)) return;
-  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === 's') {
     e.preventDefault();
     saveDeck();
+  } else if (mod && !e.shiftKey && !e.altKey && e.key === 'b') {
+    e.preventDefault();
+    toolbarActions.bold();
+  } else if (mod && !e.shiftKey && !e.altKey && e.key === 'i') {
+    e.preventDefault();
+    toolbarActions.italic();
+  } else if (mod && !e.shiftKey && !e.altKey && e.key === 'k') {
+    e.preventDefault();
+    toolbarActions.link();
   } else if (e.key === 'Tab' && !e.shiftKey) {
     e.preventDefault();
     dcReplace(dcEl().selectionStart, dcEl().selectionEnd, '  ');
@@ -2849,12 +2866,15 @@ $('quickList').addEventListener('click', (e) => {
 
 let findMarks = [];
 let findIndex = -1;
+let edFindPos = []; // editor mode: character offset of each hit in ed.value
 
 function clearFindMarks() {
   for (const m of findMarks) m.replaceWith(document.createTextNode(m.textContent));
   if (findMarks.length) $('rendered').normalize();
+  $('edBackdrop').innerHTML = '';
   findMarks = [];
   findIndex = -1;
+  edFindPos = [];
 }
 
 function applyFind(query) {
@@ -2862,15 +2882,32 @@ function applyFind(query) {
   $('findCount').textContent = '';
   if (!query) return;
   if (state.editing) {
-    // In the editor, just count; Enter steps through selections.
+    // In the editor, hits are painted on the backdrop mirror behind the
+    // (transparent) textarea; Enter steps through them like in preview.
     const q = query.toLowerCase();
-    let count = 0;
-    let i = ed.value.toLowerCase().indexOf(q);
-    while (i !== -1 && count < 1000) {
-      count++;
-      i = ed.value.toLowerCase().indexOf(q, i + 1);
+    const text = ed.value;
+    const lower = text.toLowerCase();
+    const parts = [];
+    let last = 0;
+    let idx = lower.indexOf(q);
+    while (idx !== -1 && edFindPos.length < 1000) {
+      parts.push(
+        escapeHtml(text.slice(last, idx)),
+        '<mark class="find-hit">',
+        escapeHtml(text.slice(idx, idx + query.length)),
+        '</mark>'
+      );
+      edFindPos.push(idx);
+      last = idx + query.length;
+      idx = lower.indexOf(q, last);
     }
-    $('findCount').textContent = count ? `${count} hit${count === 1 ? '' : 's'}` : 'no hits';
+    // the zero-width char keeps a trailing newline's empty last line measurable
+    parts.push(escapeHtml(text.slice(last)), '​');
+    $('edBackdrop').innerHTML = parts.join('');
+    $('edBackdrop').scrollTop = ed.scrollTop;
+    findMarks = [...$('edBackdrop').querySelectorAll('mark')];
+    if (findMarks.length) stepFind(0, true);
+    else $('findCount').textContent = 'no hits';
     return;
   }
   const root = $('rendered');
@@ -2910,21 +2947,20 @@ function applyFind(query) {
 
 function stepFind(direction, absolute) {
   if (state.editing) {
-    const q = $('findInput').value.toLowerCase();
-    if (!q) return;
-    const from = direction >= 0 ? ed.selectionEnd : Math.max(0, ed.selectionStart - 1);
-    let pos = direction >= 0
-      ? ed.value.toLowerCase().indexOf(q, from)
-      : ed.value.toLowerCase().lastIndexOf(q, from - 1);
-    if (pos === -1) {
-      pos = direction >= 0
-        ? ed.value.toLowerCase().indexOf(q)
-        : ed.value.toLowerCase().lastIndexOf(q);
-    }
-    if (pos === -1) return;
-    ed.focus();
-    ed.setSelectionRange(pos, pos + q.length);
-    $('findInput').focus();
+    if (!findMarks.length) return;
+    if (findIndex >= 0 && findMarks[findIndex]) findMarks[findIndex].classList.remove('current');
+    findIndex = absolute
+      ? direction
+      : (findIndex + direction + findMarks.length) % findMarks.length;
+    const mark = findMarks[findIndex];
+    mark.classList.add('current');
+    // center the hit in the textarea's viewport; keep the mirror in sync
+    ed.scrollTop = Math.max(0, mark.offsetTop - ed.clientHeight / 2);
+    $('edBackdrop').scrollTop = ed.scrollTop;
+    // park the caret on the hit so tabbing into the editor lands there
+    const pos = edFindPos[findIndex];
+    ed.setSelectionRange(pos, pos + $('findInput').value.length);
+    $('findCount').textContent = `${findIndex + 1}/${findMarks.length}`;
     return;
   }
   if (!findMarks.length) return;
@@ -2967,6 +3003,17 @@ $('findInput').addEventListener('keydown', (e) => {
 $('findNext').addEventListener('click', () => stepFind(1));
 $('findPrev').addEventListener('click', () => stepFind(-1));
 $('findClose').addEventListener('click', closeFind);
+
+// keep the backdrop mirror glued to the textarea: same scroll position, and
+// re-marked whenever the text changes while the find bar is open
+ed.addEventListener('scroll', () => {
+  const bd = $('edBackdrop');
+  bd.scrollTop = ed.scrollTop;
+  bd.scrollLeft = ed.scrollLeft;
+});
+ed.addEventListener('input', () => {
+  if (!$('findBar').hidden && $('findInput').value) applyFind($('findInput').value);
+});
 
 // mousedown would move focus out of the textarea and lose the selection —
 // except the emoji panel's search input and the native color input.
@@ -3193,6 +3240,9 @@ document.addEventListener('keydown', (e) => {
   } else if (mod && e.key === 'e' && state.current) {
     e.preventDefault();
     state.editing ? exitEdit({ save: true }) : enterEdit();
+  } else if (mod && e.key === '/') {
+    e.preventDefault();
+    toggleShortcuts();
   } else if (e.key === '/' && !e.target.matches('input, textarea')) {
     e.preventDefault();
     $('search').focus();
@@ -4197,7 +4247,9 @@ const tableCells = (line) => {
   if (s.endsWith('|')) s = s.slice(0, -1);
   return s.split('|').map((c) => c.trim());
 };
-const isSepCells = (cells) => cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c || '-'));
+// a separator row is dashes in EVERY cell — an all-empty row (freshly added
+// via Tab) must stay a data row, not get rewritten into dashes
+const isSepCells = (cells) => cells.length > 0 && cells.every((c) => /^:?-+:?$/.test((c || '').trim()));
 
 // Reformat a table block and return cell ranges for caret placement.
 function formatTable(text) {
@@ -4242,7 +4294,7 @@ function formatTable(text) {
     off += line.length + 1;
     return out;
   });
-  return { text: lines.join('\n'), cells: abs };
+  return { text: lines.join('\n'), cells: abs, widths };
 }
 
 function handleTableTab(box, shift) {
@@ -4263,13 +4315,17 @@ function handleTableTab(box, shift) {
     if (c < 0) { r -= 1; c = cols - 1; }
     if (r < 0) { r = 0; c = 0; break; }
     if (r >= fmt.cells.length) {
-      // Tab past the last cell: append an empty row
-      const empty = '|' + (' '.repeat(3) + ' |').repeat(cols);
-      fmt.text += '\n' + empty;
-      fmt.cells.push([...Array(cols)].map((_, i) => {
-        const start = fmt.text.length - empty.length + 2 + i * 6;
+      // Tab past the last cell: append an empty row, padded to the table's
+      // column widths so it's correctly formatted immediately
+      const empty = '|' + fmt.widths.map((w) => ' ' + ' '.repeat(w) + ' |').join('');
+      const lineStart = fmt.text.length + 1;
+      let off = 2;
+      fmt.cells.push(fmt.widths.map((w) => {
+        const start = lineStart + off;
+        off += w + 3;
         return { start, end: start, sep: false };
       }));
+      fmt.text += '\n' + empty;
       break;
     }
     if (fmt.cells[r][c] && fmt.cells[r][c].sep) { c += shift ? -1 : 1; continue; }
@@ -4283,7 +4339,18 @@ function handleTableTab(box, shift) {
 
 for (const boxEl of [ed, $('deckCode')]) {
   boxEl.addEventListener('keydown', (e) => {
-    if (e.key !== 'Tab' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'Enter' && e.shiftKey) {
+      // markdown tables are one text line per row, so a line break inside a
+      // cell has to be a literal <br> — Shift+Enter types it for you
+      if (tableBlockAt(boxEl.value, boxEl.selectionStart)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        document.execCommand('insertText', false, '<br>');
+      }
+      return;
+    }
+    if (e.key !== 'Tab') return;
     if (handleTableTab(boxEl, e.shiftKey)) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -4373,12 +4440,23 @@ function renderNoteBody(note) {
   renderMarkdown($('rendered'), note.body);
 }
 
+function syncMenuSections() {
+  document.querySelectorAll('#noteMenu .cmd-sec').forEach((sec) => {
+    let el = sec.nextElementSibling;
+    let any = false;
+    while (el && !el.classList.contains('cmd-sec')) {
+      if (el.tagName === 'BUTTON' && !el.hidden) any = true;
+      el = el.nextElementSibling;
+    }
+    sec.hidden = !any;
+  });
+}
+
 function updateLockMenu(note) {
   const locked = isLockedBody(note.body);
   const cached = locked && unlockedNotes.has(note.file);
-  $('lockBtn').hidden = locked && !cached;
-  $('lockBtn').textContent = locked ? 'Lock again' : 'Lock note…';
   $('removeLockBtn').hidden = !cached;
+  syncMenuSections();
   // header icon mirrors the state
   const icon = $('lockIconBtn');
   icon.classList.toggle('is-sealed', locked && !cached);
@@ -4462,19 +4540,6 @@ $('lockConfirm').addEventListener('click', async () => {
   updateLockMenu(state.current);
   renderList();
   alertBar('Note locked 🔒');
-});
-
-$('lockBtn').addEventListener('click', () => {
-  const note = state.current;
-  if (!note) return;
-  if (isLockedBody(note.body)) {
-    // "Lock again" — forget the key for this session
-    unlockedNotes.delete(note.file);
-    renderNoteBody(note);
-    updateLockMenu(note);
-  } else {
-    openLockModal();
-  }
 });
 
 $('removeLockBtn').addEventListener('click', async () => {
@@ -4913,3 +4978,24 @@ $('dlTranscriptBtn').addEventListener('click', async () => {
     URL.revokeObjectURL(a.href);
   }
 });
+
+/* ——— keyboard cheat sheet (⌘/) ——— */
+
+function toggleShortcuts() {
+  const m = $('shortcutModal');
+  m.hidden = !m.hidden;
+}
+
+$('hintShortcuts').addEventListener('click', toggleShortcuts);
+$('shortcutClose').addEventListener('click', toggleShortcuts);
+$('shortcutModal').addEventListener('mousedown', (e) => {
+  if (e.target === $('shortcutModal')) $('shortcutModal').hidden = true;
+});
+// capture so the sheet closes before any panel underneath reacts to the Esc
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('shortcutModal').hidden) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    $('shortcutModal').hidden = true;
+  }
+}, true);
