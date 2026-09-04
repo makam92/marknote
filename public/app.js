@@ -738,6 +738,7 @@ function showNote(note) {
   $('presenterBtn').hidden = !isDeckNote(note);
   // any note with real content can yield todos — plans and research included
   $('todoSuggestBtn').hidden = !note.body || note.body.trim().length < 80 || isLockedBody(note.body);
+  $('dlTranscriptBtn').hidden = !note.body.includes('## Transcript') || isLockedBody(note.body);
   updateLockMenu(note);
   closeFind();
   renderBacklinks(note);
@@ -4876,3 +4877,39 @@ document.querySelectorAll('.setup-dl').forEach((btn) =>
     }, 1000);
   })
 );
+
+/* ——— download transcript as .txt ——— */
+
+function extractTranscriptText(note) {
+  const m = note.body.match(/<summary>Show transcript<\/summary>\s*([\s\S]*?)\s*<\/details>/);
+  if (!m) return null;
+  // strip the markdown dressing: "- **0:12** Anna: "…"" → "[0:12] Anna: …"
+  return m[1]
+    .split('\n')
+    .map((l) => l
+      .replace(/^- \*\*([\d:]+)\*\*\s*/, '[$1] ')
+      .replace(/\*\*/g, ''))
+    .join('\n')
+    .trim() + '\n';
+}
+
+$('dlTranscriptBtn').addEventListener('click', async () => {
+  const note = state.current;
+  if (!note) return;
+  const text = extractTranscriptText(note);
+  if (!text) { alertBar('No transcript found in this note'); return; }
+  const header = `${note.title}\nTranscript — exported ${todayStr()} from Marknote\n\n`;
+  const name = note.title.replace(/[/\\:]/g, '-') + ' — transcript.txt';
+  if (window.marknoteNative && window.marknoteNative.saveText) {
+    const res = await window.marknoteNative.saveText(name, header + text);
+    if (res && res.ok) alertBar('Transcript saved');
+    else if (res && res.error) alertBar('Save failed: ' + res.error);
+  } else {
+    const blob = new Blob([header + text], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+});

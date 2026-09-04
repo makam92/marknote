@@ -162,6 +162,22 @@ ipcMain.handle('export:pdf', async (_e, file, isDeck, title) => {
   }
 });
 
+// Save arbitrary text (transcripts etc.) via the OS save dialog.
+ipcMain.handle('save:text', async (_e, defaultName, content) => {
+  try {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      defaultPath: path.join(app.getPath('downloads'), String(defaultName || 'export.txt').replace(/[/\\:]/g, '-')),
+      filters: [{ name: 'Text', extensions: ['txt'] }]
+    });
+    if (canceled || !filePath) return { canceled: true };
+    fs.writeFileSync(filePath, String(content));
+    shell.showItemInFolder(filePath);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { error: String(err.message).slice(0, 200) };
+  }
+});
+
 // ——— backup export ———
 ipcMain.handle('backup:save', async () => {
   try {
