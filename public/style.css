@@ -323,6 +323,9 @@ model-viewer.model-embed {
 .reveal section ul, .reveal section ol { margin-left: 1em; }
 .reveal section a { color: var(--accent); }
 .reveal section strong { font-weight: 700; }
+.reveal section table { border-collapse: collapse; margin: 0.4em 0 0.8em; font-size: 0.85em; }
+.reveal section th, .reveal section td { border: 1px solid var(--line); padding: 0.3em 0.7em; text-align: left; vertical-align: top; }
+.reveal section th { background: var(--paper-deep); font-weight: 600; }
 .reveal section code {
   font-family: var(--font-mono);
   font-size: 0.8em;
@@ -1981,6 +1984,11 @@ body.display-mode .sidebar { display: none !important; }
 .pres-slide h1 { font-size: 1.9em; margin-bottom: 0.4em; }
 .pres-slide h2 { font-size: 1.5em; margin-bottom: 0.4em; }
 .pres-slide img, .pres-slide model-viewer { max-width: 100%; }
+/* the preview panes are hardcoded light (like the slides themselves), so the
+   table colors are light literals too — theme vars would flip in dark mode */
+.pres-slide table { border-collapse: collapse; margin: 0.4em 0 0.8em; font-size: 0.9em; }
+.pres-slide th, .pres-slide td { border: 1px solid #e5e2da; padding: 0.3em 0.7em; text-align: left; vertical-align: top; }
+.pres-slide th { background: #f6f5f2; font-weight: 600; }
 .pres-end {
   height: 100%;
   display: flex;
