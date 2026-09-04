@@ -20,6 +20,9 @@ const ATTACH_DIR = path.join(DATA_ROOT, 'attachments');
 const TRASH_DIR = path.join(DATA_ROOT, '.trash');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const TEMPLATES_DIR = path.join(DATA_ROOT, 'templates');
+
+let APP_VERSION = '0.0.0';
+try { APP_VERSION = require('./package.json').version || APP_VERSION; } catch { /* dev checkout */ }
 const PORT = Number(process.env.PORT) || 4747;
 
 const MIME = {
@@ -378,7 +381,8 @@ let transcribeStatus = { phase: 'idle' };
 
 const dls = {
   model: { status: 'idle' },
-  ffmpeg: { status: 'idle' }
+  ffmpeg: { status: 'idle' },
+  update: { status: 'idle' }
 };
 
 // Static ffmpeg for macOS from evermeet.cx (the build ffmpeg.org links to).
@@ -390,8 +394,8 @@ const DL_SOURCES = {
     : { url: 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip', size: 80000000 }
 };
 
-function startDownload(kind, dest, finalize) {
-  const src = DL_SOURCES[kind];
+function startDownload(kind, dest, finalize, srcOverride) {
+  const src = srcOverride || DL_SOURCES[kind];
   const tmp = dest + '.part';
   fsp.unlink(tmp).catch(() => {});
   dls[kind] = { status: 'downloading', received: 0, total: src.size };
@@ -421,6 +425,46 @@ function startDownload(kind, dest, finalize) {
     }
   });
   child.on('error', () => { clearInterval(tick); dls[kind] = { status: 'error', error: 'curl not available' }; });
+}
+
+/* ——— self-update ———
+   The app checks its public GitHub releases. On macOS it can then replace its
+   own bundle with the freshly downloaded one and relaunch: files the app
+   downloads itself carry no quarantine flag, so Gatekeeper stays quiet even
+   though the app is unsigned. Windows users get a download link instead
+   (a running .exe can't swap itself out this easily). */
+const UPDATE_REPO = 'makam92/marknote';
+let updateCache = { at: 0, data: null };
+
+function cmpVer(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// …/Marknote.app/Contents/MacOS/<binary> → …/Marknote.app (null in dev mode)
+function appBundlePath() {
+  const m = process.execPath.match(/^(.*?\.app)\/Contents\/MacOS\//);
+  return m ? m[1] : null;
+}
+
+function fetchLatestRelease() {
+  return new Promise((resolve, reject) => {
+    execFile(
+      CURL,
+      ['-fsSL', '-H', 'User-Agent: marknote', '-H', 'Accept: application/vnd.github+json',
+        `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`],
+      { maxBuffer: 4 * 1024 * 1024 },
+      (err, out) => {
+        if (err) return reject(new Error('release check failed'));
+        try { resolve(JSON.parse(out)); } catch { reject(new Error('bad release data')); }
+      }
+    );
+  });
 }
 
 const server = http.createServer(async (req, res) => {
@@ -480,6 +524,78 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/download-ffmpeg' && req.method === 'GET') {
       if (dls.ffmpeg.status !== 'downloading' && ffmpegPath()) dls.ffmpeg = { status: 'done' };
       return send(res, 200, dls.ffmpeg);
+    }
+
+    // Update check: cached 6h; ?force=1 asks GitHub again. Dev checkouts
+    // (non-bundled) never see updates — code comes from git there.
+    if (pathname === '/api/update-check' && req.method === 'GET') {
+      if (!BUNDLED) return send(res, 200, { dev: true, current: APP_VERSION, hasUpdate: false });
+      if (updateCache.data && Date.now() - updateCache.at < 6 * 3600 * 1000 && !url.searchParams.get('force')) {
+        return send(res, 200, updateCache.data);
+      }
+      try {
+        const rel = await fetchLatestRelease();
+        const latest = String(rel.tag_name || '').replace(/^v/, '');
+        const wantAsset = IS_WIN ? 'Marknote-win.zip' : 'Marknote-mac.zip';
+        const asset = (rel.assets || []).find((a) => a.name === wantAsset);
+        const data = {
+          current: APP_VERSION,
+          latest,
+          hasUpdate: !!latest && cmpVer(latest, APP_VERSION) > 0 && !!asset,
+          url: rel.html_url,
+          asset: asset ? asset.browser_download_url : null,
+          size: asset ? asset.size : 0,
+          platform: IS_WIN ? 'win' : 'mac',
+          canSelfUpdate: !IS_WIN && !!appBundlePath()
+        };
+        updateCache = { at: Date.now(), data };
+        return send(res, 200, data);
+      } catch (err) {
+        return send(res, 200, { current: APP_VERSION, hasUpdate: false, error: err.message });
+      }
+    }
+    // Self-update (macOS): download the release zip, swap the bundle on disk
+    // (the running process keeps its open files), relaunch via a detached
+    // shell once this process has exited. POST starts, GET polls.
+    if (pathname === '/api/update-run' && req.method === 'POST') {
+      const info = updateCache.data;
+      if (!info || !info.hasUpdate || !info.asset) return send(res, 400, { error: 'no update available — check first' });
+      if (IS_WIN || !appBundlePath()) return send(res, 400, { error: 'self-update needs the macOS app bundle' });
+      if (dls.update.status === 'downloading' || dls.update.status === 'installing') return send(res, 200, dls.update);
+      const dest = path.join(os.tmpdir(), 'marknote-update.zip');
+      startDownload('update', dest, async (tmp) => {
+        dls.update = { status: 'installing' };
+        const scratch = tmp + '-x';
+        await fsp.rm(scratch, { recursive: true, force: true });
+        await fsp.mkdir(scratch, { recursive: true });
+        await zipExtract(tmp, scratch, []);
+        await fsp.unlink(tmp).catch(() => {});
+        const fresh = path.join(scratch, 'Marknote.app');
+        if (!(await fileExists(path.join(fresh, 'Contents', 'MacOS')))) {
+          throw new Error('archive held no app bundle');
+        }
+        await new Promise((r) => execFile('xattr', ['-dr', 'com.apple.quarantine', fresh], () => r()));
+        const current = appBundlePath();
+        const parked = path.join(os.tmpdir(), 'Marknote-old-' + Date.now() + '.app');
+        const mv = (from, to) => fsp.rename(from, to).catch(
+          () => new Promise((r2, j) => execFile('mv', [from, to], (e) => (e ? j(e) : r2())))
+        );
+        await mv(current, parked);
+        try {
+          await mv(fresh, current);
+        } catch (err) {
+          await mv(parked, current); // put the old app back — never leave a hole
+          throw err;
+        }
+        await fsp.rm(scratch, { recursive: true, force: true }).catch(() => {});
+        spawn('/bin/sh', ['-c', `sleep 1.5; open "${current.replace(/"/g, '\\"')}"`], { detached: true, stdio: 'ignore' }).unref();
+        dls.update = { status: 'restarting' };
+        setTimeout(() => process.exit(0), 900);
+      }, { url: info.asset, size: info.size || 115000000 });
+      return send(res, 200, dls.update);
+    }
+    if (pathname === '/api/update-run' && req.method === 'GET') {
+      return send(res, 200, dls.update);
     }
 
     // What optional helpers are installed? The UI uses this to show friendly

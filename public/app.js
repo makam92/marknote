@@ -4999,3 +4999,59 @@ document.addEventListener('keydown', (e) => {
     $('shortcutModal').hidden = true;
   }
 }, true);
+
+/* ——— self-update ——— */
+// Bundled apps check GitHub for a newer release; the sidebar button walks
+// through download → install → relaunch (macOS). Windows gets the link.
+
+async function checkUpdate() {
+  let u;
+  try { u = await fetch('/api/update-check').then((r) => r.json()); } catch { return; }
+  if (!u || !u.hasUpdate) return;
+  const btn = $('updateBtn');
+  btn.hidden = false;
+  const idleLabel = `Update to ${u.latest}`;
+  btn.textContent = idleLabel;
+  btn.title = `You have ${u.current} — ${u.latest} is out`;
+  btn.onclick = async () => {
+    if (u.platform === 'win' || !u.canSelfUpdate) {
+      alertBar('Get the new version at github.com/makam92/marknote/releases');
+      return;
+    }
+    if (state.dirty) {
+      alertBar('Save your note first (⌘S), then update');
+      return;
+    }
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1';
+      btn.textContent = `Install ${u.latest} & restart?`;
+      setTimeout(() => {
+        if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = idleLabel; }
+      }, 6000);
+      return;
+    }
+    delete btn.dataset.armed;
+    btn.disabled = true;
+    try { await fetch('/api/update-run', { method: 'POST' }); } catch { /* poll tells the story */ }
+    const poll = setInterval(async () => {
+      let s;
+      try { s = await fetch('/api/update-run').then((r) => r.json()); } catch { s = { status: 'restarting' }; }
+      if (s.status === 'downloading') {
+        const pct = s.total ? Math.round((s.received / s.total) * 100) : 0;
+        btn.textContent = `Downloading ${pct}%…`;
+      } else if (s.status === 'installing') {
+        btn.textContent = 'Installing…';
+      } else if (s.status === 'error') {
+        clearInterval(poll);
+        btn.disabled = false;
+        btn.textContent = 'Update failed — retry';
+        alertBar('Update failed: ' + (s.error || 'unknown error'));
+      } else { // done / restarting — the app quits and reopens itself
+        clearInterval(poll);
+        btn.textContent = 'Restarting…';
+        alertBar('Updated — the app restarts itself in a moment');
+      }
+    }, 800);
+  };
+}
+setTimeout(checkUpdate, 3000);
