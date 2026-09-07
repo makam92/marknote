@@ -244,6 +244,9 @@ app.whenReady().then(async () => {
       captureWin.webContents.send('capture:reset');
       return;
     }
+    // type 'panel' (macOS NSPanel) takes keyboard focus WITHOUT activating
+    // the app — so the main window stays put and whatever app the user was
+    // in keeps its state, Spotlight-style.
     captureWin = new BrowserWindow({
       width: 620,
       height: 150,
@@ -252,6 +255,8 @@ app.whenReady().then(async () => {
       show: false,
       alwaysOnTop: true,
       skipTaskbar: true,
+      fullscreenable: false,
+      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
       webPreferences: { preload: path.join(__dirname, 'preload.js') }
     });
     captureWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -261,6 +266,9 @@ app.whenReady().then(async () => {
       const [x] = captureWin.getPosition();
       captureWin.setPosition(x, 180);
       captureWin.show();
+      captureWin.focus();
+      // make sure the caret lands in the field on the very first open too
+      captureWin.webContents.send('capture:reset');
     });
     captureWin.on('blur', () => { if (captureWin && !captureWin.isDestroyed()) captureWin.hide(); });
   };
