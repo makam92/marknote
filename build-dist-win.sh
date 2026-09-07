@@ -25,7 +25,9 @@ mv "$WIN/electron.exe" "$WIN/Marknote.exe"
 APPDIR="$WIN/resources/app"
 rm -rf "$WIN/resources/default_app.asar"
 mkdir -p "$APPDIR/public"
-printf '{ "name": "marknote", "productName": "Marknote", "version": "1.5.0", "main": "main.js" }\n' \
+VER=$(node -p "require('./package.json').version")
+printf '{ "name": "marknote", "productName": "Marknote", "version": "%s", "main": "main.js" }
+' "$VER" \
   > "$APPDIR/package.json"
 cp "$PROJECT/main.js" "$PROJECT/server.js" "$PROJECT/preload.js" "$PROJECT/AGENTS.md" "$PROJECT/CLAUDE.md" "$APPDIR/"
 ditto "$PROJECT/public" "$APPDIR/public"

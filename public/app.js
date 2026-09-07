@@ -3237,7 +3237,7 @@ $('newNoteTitle').addEventListener('keydown', async (e) => {
 async function refreshTrashCount() {
   try {
     const items = await api.trash();
-    $('trashCount').textContent = items.length ? `(${items.length})` : '';
+    $('trashCount').textContent = items.length ? String(items.length) : '';
   } catch (e) { /* server unavailable */ }
 }
 
@@ -5136,10 +5136,11 @@ async function checkUpdate() {
   try { u = await fetch('/api/update-check').then((r) => r.json()); } catch { return; }
   if (!u || !u.hasUpdate) return;
   const btn = $('updateBtn');
+  const ver = $('whatsNewBtn');
   btn.hidden = false;
-  const idleLabel = `Update to ${u.latest}`;
-  btn.textContent = idleLabel;
-  btn.title = `You have ${u.current} — ${u.latest} is out`;
+  const idleLabel = `v${u.current} → ${u.latest}`;
+  ver.textContent = idleLabel;
+  btn.title = `Update to ${u.latest} — you have ${u.current}`;
   btn.onclick = async () => {
     if (u.platform === 'win' || !u.canSelfUpdate) {
       alertBar('Get the new version at github.com/makam92/marknote/releases');
@@ -5151,9 +5152,9 @@ async function checkUpdate() {
     }
     if (!btn.dataset.armed) {
       btn.dataset.armed = '1';
-      btn.textContent = `Install ${u.latest} & restart?`;
+      ver.textContent = `Install ${u.latest} & restart?`;
       setTimeout(() => {
-        if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = idleLabel; }
+        if (btn.dataset.armed) { delete btn.dataset.armed; ver.textContent = idleLabel; }
       }, 6000);
       return;
     }
@@ -5165,17 +5166,17 @@ async function checkUpdate() {
       try { s = await fetch('/api/update-run').then((r) => r.json()); } catch { s = { status: 'restarting' }; }
       if (s.status === 'downloading') {
         const pct = s.total ? Math.round((s.received / s.total) * 100) : 0;
-        btn.textContent = `Downloading ${pct}%…`;
+        ver.textContent = `Downloading ${pct}%…`;
       } else if (s.status === 'installing') {
-        btn.textContent = 'Installing…';
+        ver.textContent = 'Installing…';
       } else if (s.status === 'error') {
         clearInterval(poll);
         btn.disabled = false;
-        btn.textContent = 'Update failed — retry';
+        ver.textContent = 'Update failed — retry';
         alertBar('Update failed: ' + (s.error || 'unknown error'));
       } else { // done / restarting — the app quits and reopens itself
         clearInterval(poll);
-        btn.textContent = 'Restarting…';
+        ver.textContent = 'Restarting…';
         alertBar('Updated — the app restarts itself in a moment');
       }
     }, 800);
@@ -5186,6 +5187,13 @@ setTimeout(checkUpdate, 3000);
 /* ——— what's new: release notes from GitHub ——— */
 
 let relCache = null;
+
+// the footer's version label doubles as the What's new button; in dev
+// checkouts (no meaningful version) it just says Marknote
+(async () => {
+  for (let i = 0; i < 20 && !caps; i++) await new Promise((r) => setTimeout(r, 250));
+  if (caps && caps.version) $('whatsNewBtn').textContent = 'v' + caps.version;
+})();
 
 async function openWhatsNew() {
   $('whatsNewModal').hidden = false;

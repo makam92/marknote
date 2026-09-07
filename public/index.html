@@ -64,16 +64,19 @@
 
   <nav id="noteList" class="note-list" aria-label="Notes"></nav>
 
-  <button id="updateBtn" class="trash-btn update-btn" hidden>Update</button>
-  <button id="whatsNewBtn" class="trash-btn" title="Release notes — what changed in each version">What’s new</button>
-  <span class="backup-wrap">
-    <button id="backupBtn" class="trash-btn" title="Export or import all notes + attachments as a zip">Backup</button>
-    <div id="backupMenu" class="create-menu backup-menu" hidden>
-      <button id="backupExport">Export zip…</button>
-      <button id="backupImport">Import zip…</button>
-    </div>
-  </span>
-  <button id="trashBtn" class="trash-btn" title="Deleted notes">Trash <span id="trashCount"></span></button>
+  <div class="side-foot">
+    <button id="whatsNewBtn" class="ver-btn" title="What’s new — release notes">Marknote</button>
+    <span class="foot-grow"></span>
+    <button id="updateBtn" class="foot-ib foot-upd" hidden title="Update">⬆</button>
+    <span class="backup-wrap">
+      <button id="backupBtn" class="foot-ib" title="Backup — export or import all notes + attachments as a zip">⤓<span class="fl">Backup</span></button>
+      <div id="backupMenu" class="create-menu backup-menu" hidden>
+        <button id="backupExport">Export zip…</button>
+        <button id="backupImport">Import zip…</button>
+      </div>
+    </span>
+    <button id="trashBtn" class="foot-ib foot-trash" title="Trash — deleted notes">🗑<span id="trashCount"></span></button>
+  </div>
 </aside>
 
 <main class="main">
