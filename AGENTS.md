@@ -224,7 +224,7 @@ use with the `Todos` tag; a `!time` without a date means today.
 | POST `/api/rename` | `{"file","title"}` | renames file+title+heading, fixes incoming links |
 | POST `/api/attachments?name=<hint>` | binary | stores in `attachments/`; returns `{file}` |
 | GET `/api/trash` · POST `/api/trash/restore` / `/api/trash/delete` | `{"file"}` | trash management |
-| POST `/api/transcribe` | `{"file"}` (attachment) | whisper.cpp transcript, speaker-labelled |
+| POST `/api/transcribe` | `{"file","lang"?}` | whisper.cpp transcript, speaker-labelled; `lang` is an ISO code (sv, en, …) or `auto` (default — detects on the first ~30s and can guess wrong) |
 | POST `/api/summarize` | `{"text","title"}` | meeting summary via local `claude` CLI |
 | POST `/api/todo-suggest` | `{"text","title"}` | action items as `{suggestions:[…]}` via local `claude` CLI |
 | GET `/api/templates` · GET `/api/templates/<file>` | — | list templates / raw template |

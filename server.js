@@ -379,6 +379,11 @@ function formatTranscript(stdout, silences = []) {
 
 let transcribeStatus = { phase: 'idle' };
 
+// Whisper language whitelist: 'auto' detects on the first ~30s, which can
+// guess wrong on quiet or noisy starts — pinning the language avoids e.g.
+// a Swedish meeting coming out in French.
+const TRANSCRIBE_LANGS = new Set(['auto', 'sv', 'en', 'no', 'da', 'fi', 'de', 'fr', 'es', 'it', 'nl', 'pt', 'pl']);
+
 const dls = {
   model: { status: 'idle' },
   ffmpeg: { status: 'idle' },
@@ -849,7 +854,8 @@ const server = http.createServer(async (req, res) => {
       if (!(await fileExists(whisperModelPath()))) {
         return send(res, 503, { error: 'whisper model missing at models/ggml-small.bin' });
       }
-      const { file } = JSON.parse(await readBody(req) || '{}');
+      const { file, lang } = JSON.parse(await readBody(req) || '{}');
+      const langArg = TRANSCRIBE_LANGS.has(lang) ? lang : 'auto';
       if (!file || file !== path.basename(file) || file.startsWith('.')) {
         return send(res, 400, { error: 'bad filename' });
       }
@@ -876,7 +882,7 @@ const server = http.createServer(async (req, res) => {
         const stdout = await new Promise((resolve, reject) => {
           // -mc 0: no text context between segments — prevents the repetition
           // loops whisper falls into on long noisy recordings
-          const child = spawn(whisperBinPath(), ['-m', whisperModelPath(), '-f', tmp, '-l', 'auto', '-np', '-ml', '80', '-sow', '-mc', '0']);
+          const child = spawn(whisperBinPath(), ['-m', whisperModelPath(), '-f', tmp, '-l', langArg, '-np', '-ml', '80', '-sow', '-mc', '0']);
           let out = '';
           const killer = setTimeout(() => child.kill('SIGKILL'), 120 * 60 * 1000);
           child.stdout.on('data', (chunk) => {

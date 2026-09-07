@@ -254,6 +254,7 @@ function embedVideos(el) {
         btn.dataset.src = href;
         btn.textContent = 'Transcribe & summarize';
         embed.appendChild(btn);
+        embed.appendChild(langPick());
       }
     } else if (isFile) {
       embed = document.createElement('span');
@@ -269,6 +270,7 @@ function embedVideos(el) {
         btn.dataset.src = href;
         btn.textContent = 'Transcribe & summarize';
         embed.appendChild(btn);
+        embed.appendChild(langPick());
       }
     } else {
       embed = document.createElement('div');
@@ -2438,6 +2440,30 @@ $('meetDiscard').addEventListener('click', discardMeeting);
 
 /* ——— transcription ——— */
 
+// Whisper's auto-detect reads the first ~30s and can guess wrong (a quiet
+// Swedish intro has come out as French) — the picker pins the language.
+// Remembered per machine; all pickers on screen stay in sync.
+const TRANS_LANGS = [
+  ['auto', 'Auto-detect'], ['sv', 'Svenska'], ['en', 'English'], ['no', 'Norsk'],
+  ['da', 'Dansk'], ['fi', 'Suomi'], ['de', 'Deutsch'], ['fr', 'Français'], ['es', 'Español']
+];
+function transLang() {
+  try { return localStorage.getItem('mn-translang') || 'auto'; } catch { return 'auto'; }
+}
+function langPick() {
+  const sel = document.createElement('select');
+  sel.className = 'lang-pick';
+  sel.title = 'Transcription language — auto-detect can guess wrong on quiet starts';
+  for (const [v, label] of TRANS_LANGS) sel.append(new Option(label, v));
+  sel.value = transLang();
+  sel.addEventListener('change', () => {
+    try { localStorage.setItem('mn-translang', sel.value); } catch { /* private mode */ }
+    document.querySelectorAll('.lang-pick').forEach((s) => { s.value = sel.value; });
+  });
+  return sel;
+}
+
+
 async function transcribeAudio(src, btn) {
   const note = state.current;
   const file = decodeURIComponent((src.split('/attachments/')[1] || '').split(/[?#]/)[0]);
@@ -2455,7 +2481,7 @@ async function transcribeAudio(src, btn) {
   }, 1200);
   try {
     btn.textContent = 'Transcribing…';
-    const tRes = await fetch('/api/transcribe', { method: 'POST', body: JSON.stringify({ file }) });
+    const tRes = await fetch('/api/transcribe', { method: 'POST', body: JSON.stringify({ file, lang: transLang() }) });
     clearInterval(tick);
     if (!tRes.ok) throw new Error((await tRes.json()).error);
     const { text } = await tRes.json();
@@ -4779,6 +4805,8 @@ $('analyzeUrlGo').addEventListener('click', () => {
 $('analyzeUrl').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('analyzeUrlGo').click();
 });
+
+$('analyzeLangSlot').appendChild(langPick());
 
 async function startAnalyze(fileBlob, url) {
   if (caps && (!caps.whisper || !caps.ffmpeg || !caps.whisperModel)) {
