@@ -134,7 +134,7 @@ ipcMain.handle('present:close', () => {
 // A hidden window loads the print view (#print/ = A4 document,
 // #printdeck/ = landscape slide pages); the page sets window.__printReady
 // once markdown, mermaid, images and fonts are done, then printToPDF runs.
-ipcMain.handle('export:pdf', async (_e, file, isDeck, title) => {
+ipcMain.handle('export:pdf', async (_e, file, isDeck, title, brand) => {
   const w = new BrowserWindow({
     show: false,
     width: isDeck ? 1400 : 900,
@@ -142,7 +142,9 @@ ipcMain.handle('export:pdf', async (_e, file, isDeck, title) => {
     webPreferences: { contextIsolation: true, nodeIntegration: false }
   });
   try {
-    const route = isDeck ? '#printdeck/' : '#print/';
+    const route = brand
+      ? (isDeck ? '#printbranddeck/' : '#printbrand/')
+      : (isDeck ? '#printdeck/' : '#print/');
     await w.loadURL(`http://localhost:${PORT}/${route}${encodeURIComponent(file)}`);
     const t0 = Date.now();
     let ready = false;
@@ -152,7 +154,19 @@ ipcMain.handle('export:pdf', async (_e, file, isDeck, title) => {
       await new Promise((r) => setTimeout(r, 250));
     }
     if (!ready) return { error: 'render timed out' };
-    const pdf = await w.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true });
+    const pdfOpts = { printBackground: true, preferCSSPageSize: true };
+    if (brand && !isDeck) {
+      // page numbers + brand line live in the page margin via Chromium's
+      // footer template (only text — templates render in a bare context)
+      const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      pdfOpts.displayHeaderFooter = true;
+      pdfOpts.headerTemplate = '<span></span>';
+      pdfOpts.footerTemplate =
+        '<div style="font-size:8px;font-family:Helvetica,Arial,sans-serif;color:#8a8378;width:100%;margin:0 18mm;display:flex;">' +
+        `<span>${esc(brand.footerLeft)}</span>` +
+        '<span style="margin-left:auto;"><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>';
+    }
+    const pdf = await w.webContents.printToPDF(pdfOpts);
     const safe = String(title || 'note').replace(/[/\\:]/g, '-');
     const { canceled, filePath } = await dialog.showSaveDialog({
       defaultPath: path.join(app.getPath('downloads'), safe + '.pdf'),

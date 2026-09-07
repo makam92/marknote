@@ -2659,3 +2659,66 @@ body.capture-mode .sidebar, body.capture-mode .main { display: none; }
   font-size: 14px;
 }
 .hist-preview-wrap .btn-accent { align-self: flex-end; }
+
+/* ——— branded PDF ——— */
+.brand-form { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 18px; }
+.brand-form input[type="text"] { width: 100%; }
+.brand-logo-row { display: flex; align-items: center; gap: 10px; }
+.brand-logo-preview {
+  max-height: 44px;
+  max-width: 140px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: #fff;
+}
+.brand-accent-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-soft); }
+.brand-accent-row input { border: none; background: none; width: 44px; height: 30px; padding: 0; cursor: pointer; }
+
+/* cover page (A4 doc exports) */
+.print-cover {
+  height: 255mm;
+  display: flex;
+  flex-direction: column;
+  page-break-after: always;
+}
+.pc-brand { display: flex; align-items: center; gap: 5mm; }
+.pc-logo { max-height: 14mm; max-width: 45mm; object-fit: contain; }
+.pc-company { font-size: 15px; font-weight: 700; letter-spacing: 0.01em; color: #221e17; }
+.pc-mid { margin: auto 0; }
+.pc-rule { width: 52px; height: 5px; background: var(--brand-accent, #b4551d); border-radius: 3px; margin-bottom: 16px; }
+.pc-title { font-size: 36px; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 12px; }
+.pc-date { font-family: var(--font-mono); font-size: 12px; color: #8a8378; }
+.pc-foot { margin-top: auto; font-size: 12.5px; color: #6b6459; }
+
+/* brand lockup chip on branded deck slides: white plate so it reads on any
+   slide background, logo + company as one deliberate mark */
+.print-slide { position: relative; }
+.slide-brand {
+  position: absolute;
+  left: 9mm;
+  bottom: 6mm;
+  display: flex;
+  align-items: center;
+  gap: 2.6mm;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 2.4mm;
+  padding: 1.8mm 3.2mm;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.slide-brand img { max-height: 7mm; max-width: 24mm; object-fit: contain; display: block; }
+.slide-brand span { font-size: 8.5pt; font-weight: 600; color: #221e17; white-space: nowrap; }
+
+/* macOS Preview renders soft box-shadows in PDFs as hard gray plates —
+   flatten every shadow in print output; borders carry the definition */
+body.print-mode * { box-shadow: none !important; }
+body.print-mode .slide-brand { border: 1px solid #e0dcd3; }
+
+/* branded deck closing slide */
+.print-endslide { display: flex; align-items: center; justify-content: center; background: #f6f5f2; }
+.pe-mid { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.pe-logo { max-height: 18mm; max-width: 62mm; object-fit: contain; }
+.pe-company { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #221e17; }
+.pe-rule { width: 44px; height: 4px; border-radius: 3px; background: var(--brand-accent, #b4551d); }
+.pe-author { font-size: 14.5px; color: #6b6459; }

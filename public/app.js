@@ -3995,7 +3995,7 @@ document.addEventListener('keydown', (e) => {
 // hidden Electron window (or a person in a browser tab) that it's safe to
 // print. In the app the ⋯ menu button runs printToPDF via IPC.
 
-async function bootPrintMode(deckMode) {
+async function bootPrintMode(deckMode, branded) {
   document.body.classList.add('print-mode');
   document.documentElement.dataset.theme = 'light';
   mermaid.initialize({
@@ -4004,7 +4004,9 @@ async function bootPrintMode(deckMode) {
     fontFamily: 'Figtree, sans-serif',
     suppressErrorRendering: true
   });
-  const prefix = deckMode ? '#printdeck/' : '#print/';
+  const prefix = branded
+    ? (deckMode ? '#printbranddeck/' : '#printbrand/')
+    : (deckMode ? '#printdeck/' : '#print/');
   const file = decodeURIComponent(location.hash.slice(prefix.length));
   while (!state.notes.length) await new Promise((r) => setTimeout(r, 100));
   const note = state.notes.find((n) => n.file === file);
@@ -4027,6 +4029,34 @@ async function bootPrintMode(deckMode) {
   root.className = deckMode ? 'print-deck' : 'print-doc';
   document.body.appendChild(root);
 
+  let brandCfg = null;
+  if (branded) {
+    brandCfg = await fetch('/api/brand').then((r) => r.json()).catch(() => null);
+  }
+  if (brandCfg && !deckMode) {
+    const cover = document.createElement('div');
+    cover.className = 'print-cover';
+    if (brandCfg.accent) cover.style.setProperty('--brand-accent', brandCfg.accent);
+    cover.innerHTML =
+      '<div class="pc-brand"></div>' +
+      '<div class="pc-mid"><div class="pc-rule"></div><h1 class="pc-title"></h1><div class="pc-date"></div></div>' +
+      '<div class="pc-foot"></div>';
+    const pcBrand = cover.querySelector('.pc-brand');
+    if (brandCfg.logo) pcBrand.insertAdjacentHTML('beforeend', '<img class="pc-logo" src="/api/brand-logo" alt="">');
+    if (brandCfg.company) {
+      const s = document.createElement('span');
+      s.className = 'pc-company';
+      s.textContent = brandCfg.company;
+      pcBrand.appendChild(s);
+    }
+    cover.querySelector('.pc-title').textContent = note.title;
+    cover.querySelector('.pc-date').textContent = new Date(note.modified).toLocaleDateString('sv-SE', { year: 'numeric', month: 'long', day: 'numeric' });
+    cover.querySelector('.pc-foot').textContent = brandCfg.company
+      ? (brandCfg.author || '')
+      : [brandCfg.company, brandCfg.author].filter(Boolean).join(' · ');
+    root.appendChild(cover);
+  }
+
   if (deckMode) {
     const chunks = splitSlides(expandTransclusions(note.body));
     for (const chunk of chunks) {
@@ -4043,6 +4073,29 @@ async function bootPrintMode(deckMode) {
       renderMarkdown(inner, chunk, { staticMermaid: true });
       inner.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
       await renderMermaidStatic(inner);
+      if (brandCfg && (brandCfg.logo || brandCfg.company)) {
+        const chip = document.createElement('div');
+        chip.className = 'slide-brand';
+        if (brandCfg.logo) chip.insertAdjacentHTML('beforeend', '<img src="/api/brand-logo" alt="">');
+        if (brandCfg.company) {
+          const s = document.createElement('span');
+          s.textContent = brandCfg.company;
+          chip.appendChild(s);
+        }
+        slide.appendChild(chip);
+      }
+    }
+    // closing slide: logo, company and the contact line — the "who to call" page
+    if (brandCfg && (brandCfg.company || brandCfg.author || brandCfg.logo)) {
+      const end = document.createElement('div');
+      end.className = 'print-slide print-endslide';
+      if (brandCfg.accent) end.style.setProperty('--brand-accent', brandCfg.accent);
+      end.innerHTML = '<div class="pe-mid">' +
+        (brandCfg.logo ? '<img class="pe-logo" src="/api/brand-logo" alt="">' : '') +
+        '<div class="pe-company"></div><div class="pe-rule"></div><div class="pe-author"></div></div>';
+      end.querySelector('.pe-company').textContent = brandCfg.company || '';
+      end.querySelector('.pe-author').textContent = brandCfg.author || '';
+      root.appendChild(end);
     }
   } else {
     const doc = document.createElement('div');
@@ -4059,11 +4112,14 @@ async function bootPrintMode(deckMode) {
   try { await document.fonts.ready; } catch (e) { /* older engines */ }
   window.__printReady = true;
   // In a plain browser tab, hand the person the print dialog directly.
-  const headless = navigator.webdriver || /HeadlessChrome/.test(navigator.userAgent);
+  const headless = navigator.webdriver || /HeadlessChrome/.test(navigator.userAgent)
+    || new URLSearchParams(location.search).has('noprint');
   if (!navigator.userAgent.includes('Electron') && !headless) setTimeout(() => window.print(), 400);
 }
 if (location.hash.startsWith('#print/')) bootPrintMode(false);
 else if (location.hash.startsWith('#printdeck/')) bootPrintMode(true);
+else if (location.hash.startsWith('#printbrand/')) bootPrintMode(false, true);
+else if (location.hash.startsWith('#printbranddeck/')) bootPrintMode(true, true);
 else if (location.hash === '#capture') bootCaptureMode();
 
 $('pdfBtn').addEventListener('click', async () => {
@@ -5521,4 +5577,92 @@ $('histRestore').addEventListener('click', async () => {
   applySaved(updated);
   renderNoteBody(updated);
   alertBar('Restored — the replaced version was itself saved to history.');
+});
+
+/* ——— branded PDF: settings modal + export ——— */
+
+let brandCfg = null;
+
+async function openBrandModal() {
+  $('noteMenu').hidden = true;
+  brandCfg = await fetch('/api/brand').then((r) => r.json()).catch(() => ({}));
+  $('brandCompany').value = brandCfg.company || '';
+  $('brandAuthor').value = brandCfg.author || '';
+  $('brandFooter').value = brandCfg.footer || '';
+  $('brandAccent').value = brandCfg.accent || '#b4551d';
+  const img = $('brandLogoPreview');
+  img.hidden = !brandCfg.logo;
+  $('brandLogoRemove').hidden = !brandCfg.logo;
+  if (brandCfg.logo) img.src = '/api/brand-logo?' + Date.now();
+  $('brandModal').hidden = false;
+  $('brandCompany').focus();
+}
+
+$('brandPdfBtn').addEventListener('click', openBrandModal);
+$('brandCancel').addEventListener('click', () => { $('brandModal').hidden = true; });
+$('brandModal').addEventListener('mousedown', (e) => {
+  if (e.target === $('brandModal')) $('brandModal').hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('brandModal').hidden) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    $('brandModal').hidden = true;
+  }
+}, true);
+
+$('brandLogoPick').addEventListener('click', () => $('brandLogoFile').click());
+$('brandLogoFile').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const res = await fetch('/api/brand-logo?name=' + encodeURIComponent(f.name), {
+    method: 'POST',
+    headers: { 'Content-Type': f.type || 'application/octet-stream' },
+    body: f
+  });
+  if (res.ok) {
+    $('brandLogoPreview').src = '/api/brand-logo?' + Date.now();
+    $('brandLogoPreview').hidden = false;
+    $('brandLogoRemove').hidden = false;
+  } else {
+    alertBar('Logo upload failed');
+  }
+  e.target.value = '';
+});
+$('brandLogoRemove').addEventListener('click', async () => {
+  await fetch('/api/brand-logo', { method: 'DELETE' }).catch(() => {});
+  $('brandLogoPreview').hidden = true;
+  $('brandLogoRemove').hidden = true;
+});
+
+$('brandExport').addEventListener('click', async () => {
+  const note = state.current;
+  if (!note) return;
+  const cfg = await fetch('/api/brand', {
+    method: 'PUT',
+    body: JSON.stringify({
+      company: $('brandCompany').value.trim(),
+      author: $('brandAuthor').value.trim(),
+      footer: $('brandFooter').value.trim(),
+      accent: $('brandAccent').value
+    })
+  }).then((r) => r.json());
+  $('brandModal').hidden = true;
+  if (state.editing && state.dirty) {
+    const updated = await api.save(note.file, await rawForSave($('editor').value));
+    applySaved(updated);
+  }
+  const deckMode = isDeckNote(note);
+  const footerLeft = cfg.footer || [cfg.company, note.title].filter(Boolean).join(' · ');
+  if (window.marknoteNative && window.marknoteNative.exportPdf) {
+    alertBar('Creating branded PDF…');
+    const res = await window.marknoteNative.exportPdf(note.file, deckMode, note.title, { footerLeft });
+    if (res && res.ok) alertBar('PDF saved: ' + res.path.split('/').pop());
+    else if (res && res.error) alertBar('PDF export failed: ' + res.error);
+  } else {
+    window.open(
+      location.origin + '/' + (deckMode ? '#printbranddeck/' : '#printbrand/') + encodeURIComponent(note.file),
+      '_blank'
+    );
+  }
 });

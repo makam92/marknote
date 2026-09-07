@@ -109,6 +109,7 @@
             <button id="deckBtn" class="cmd-item" hidden><span class="ci">✎</span>Edit deck</button>
             <div class="cmd-sec" data-sec="export">Exportera</div>
             <button id="pdfBtn" class="cmd-item"><span class="ci">⤓</span>Export PDF</button>
+            <button id="brandPdfBtn" class="cmd-item"><span class="ci">◆</span>Branded PDF…</button>
             <button id="dlTranscriptBtn" class="cmd-item" hidden><span class="ci">≡</span>Download transcript</button>
             <div class="cmd-sec" data-sec="ai">AI</div>
             <button id="todoSuggestBtn" class="cmd-item" hidden><span class="ci">☑</span>Suggest todos</button>
@@ -406,6 +407,32 @@
       <div id="analyzeStatus" class="analyze-status" hidden></div>
       <div class="analyze-lang-row">Spoken language: <span id="analyzeLangSlot"></span></div>
       <div class="analyze-hint">A meeting note is created and transcription + Claude summary start automatically. Links behind logins (Teams/SharePoint) can't be fetched — download the file first.</div>
+    </div>
+  </div>
+</div>
+
+<div id="brandModal" class="ts-modal" hidden>
+  <div class="ts-box brand-box">
+    <header class="ts-head">
+      <strong>Branded PDF</strong>
+      <span class="ts-spacer"></span>
+      <button id="brandCancel" type="button">Cancel</button>
+    </header>
+    <div class="brand-form">
+      <p class="lock-info">Cover page, footer with page numbers, and your logo on every slide. Saved once — used for every branded export.</p>
+      <div class="brand-logo-row">
+        <img id="brandLogoPreview" class="brand-logo-preview" alt="" hidden>
+        <button id="brandLogoPick" type="button">Choose logo…</button>
+        <input id="brandLogoFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+        <button id="brandLogoRemove" type="button" hidden>Remove logo</button>
+      </div>
+      <input id="brandCompany" type="text" placeholder="Company — shown on the cover and in the footer" autocomplete="off">
+      <input id="brandAuthor" type="text" placeholder="Author / contact — document cover + deck closing slide (optional)" autocomplete="off">
+      <input id="brandFooter" type="text" placeholder="Footer text (optional — defaults to company · note title)" autocomplete="off">
+      <label class="brand-accent-row">Accent color <input id="brandAccent" type="color" value="#b4551d"></label>
+      <div class="lock-actions">
+        <button id="brandExport" class="btn-accent">Save &amp; export PDF</button>
+      </div>
     </div>
   </div>
 </div>

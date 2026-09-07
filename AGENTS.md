@@ -158,7 +158,15 @@ there is no recovery for a forgotten passphrase.
 ⋯ menu → "Export PDF": regular notes become an A4 document, deck notes become
 landscape slide pages (backgrounds included, mermaid rendered). The print views
 are also plain URLs — `#print/<file>` and `#printdeck/<file>` — which browsers
-can print directly.
+can print directly (`?noprint=1` skips the auto print dialog).
+
+"Branded PDF…" adds branding: documents get a cover page (logo, title, date,
+company · author, accent rule) and a footer with page numbers; deck slides get
+a small corner logo. Config lives in `brand.json` + `brand-logo.*` in the data
+dir, edited via the modal or the API: GET/PUT `/api/brand`
+(`{company,author,footer,accent}`), POST/GET/DELETE `/api/brand-logo` (binary
+png/jpg/svg/webp). Branded print routes: `#printbrand/<file>` and
+`#printbranddeck/<file>`.
 
 ## Meeting notes
 

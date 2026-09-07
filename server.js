@@ -757,6 +757,51 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, out);
     }
 
+    // Branding for PDF exports: a small JSON config + an optional logo file
+    // (brand.json / brand-logo.* in the data dir).
+    if (pathname === '/api/brand' && req.method === 'GET') {
+      let cfg = {};
+      try { cfg = JSON.parse(await fsp.readFile(path.join(DATA_ROOT, 'brand.json'), 'utf8')); } catch { /* unset */ }
+      const logo = (await fsp.readdir(DATA_ROOT)).find((f) => f.startsWith('brand-logo.'));
+      return send(res, 200, { company: '', author: '', footer: '', accent: '', ...cfg, logo: logo || null });
+    }
+    if (pathname === '/api/brand' && req.method === 'PUT') {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const cfg = {
+        company: String(body.company || '').slice(0, 120),
+        author: String(body.author || '').slice(0, 120),
+        footer: String(body.footer || '').slice(0, 200),
+        accent: /^#[0-9a-fA-F]{3,8}$/.test(body.accent || '') ? body.accent : ''
+      };
+      await fsp.writeFile(path.join(DATA_ROOT, 'brand.json'), JSON.stringify(cfg, null, 2));
+      return send(res, 200, cfg);
+    }
+    if (pathname === '/api/brand-logo' && req.method === 'POST') {
+      const buf = await readBodyBuffer(req, 20 * 1024 * 1024);
+      if (!buf.length) return send(res, 400, { error: 'empty body' });
+      const okExt = ['.png', '.jpg', '.jpeg', '.svg', '.webp'];
+      const extMap = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/svg+xml': '.svg', 'image/webp': '.webp' };
+      let ext = extMap[req.headers['content-type']]
+        || path.extname(url.searchParams.get('name') || '').toLowerCase();
+      if (!okExt.includes(ext)) ext = '.png';
+      for (const f of await fsp.readdir(DATA_ROOT)) {
+        if (f.startsWith('brand-logo.')) await fsp.unlink(path.join(DATA_ROOT, f)).catch(() => {});
+      }
+      await fsp.writeFile(path.join(DATA_ROOT, 'brand-logo' + ext), buf);
+      return send(res, 200, { file: 'brand-logo' + ext });
+    }
+    if (pathname === '/api/brand-logo' && req.method === 'GET') {
+      const logo = (await fsp.readdir(DATA_ROOT)).find((f) => f.startsWith('brand-logo.'));
+      if (!logo) return send(res, 404, { error: 'no logo' });
+      return serveStatic(res, DATA_ROOT, logo, req.headers.range);
+    }
+    if (pathname === '/api/brand-logo' && req.method === 'DELETE') {
+      for (const f of await fsp.readdir(DATA_ROOT)) {
+        if (f.startsWith('brand-logo.')) await fsp.unlink(path.join(DATA_ROOT, f)).catch(() => {});
+      }
+      return send(res, 200, { ok: true });
+    }
+
     if (pathname === '/api/templates' && req.method === 'GET') {
       await fsp.mkdir(TEMPLATES_DIR, { recursive: true });
       const files = (await fsp.readdir(TEMPLATES_DIR)).filter((f) => f.endsWith('.md') && !f.startsWith('.'));
