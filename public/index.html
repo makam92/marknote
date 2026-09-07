@@ -52,7 +52,10 @@
     </div>
   </div>
 
-  <button id="todosBtn" class="todos-btn" title="Todos — tasks with dates and reminders">☑ Todos <span id="todoCount"></span></button>
+  <div class="quick-row">
+    <button id="todosBtn" class="todos-btn" title="Todos — tasks with dates and reminders">☑ Todos <span id="todoCount"></span></button>
+    <button id="todayBtn" class="todos-btn" title="Quick notes — today’s note (⌘D)">⚡ Quick notes</button>
+  </div>
 
   <div class="labels-section">
     <button id="labelsHead" class="labels-head" title="Show/hide labels">
@@ -110,6 +113,7 @@
             <button id="todoSuggestBtn" class="cmd-item" hidden><span class="ci">☑</span>Suggest todos</button>
             <div class="cmd-sec" data-sec="organize">Organisera</div>
             <button id="saveTemplateBtn" class="cmd-item"><span class="ci">📄</span>Save as template</button>
+            <button id="historyBtn" class="cmd-item"><span class="ci">🕘</span>History</button>
             <button id="removeLockBtn" class="cmd-item" hidden><span class="ci">🔓</span>Remove lock…</button>
             <button id="renameBtn" class="cmd-item"><span class="ci">✏️</span>Rename</button>
             <button id="deleteBtn" class="cmd-item danger"><span class="ci">🗑</span><span class="dl">Delete</span></button>
@@ -235,6 +239,15 @@
     </div>
     <div id="todoGroups"></div>
     <p class="todo-hint">Todos live in the note <a href="#note/Todos.md">Todos</a> as a normal task list — a due date is <code>@2026-08-27</code>, a reminder is <code>!09:30</code>.</p>
+  </section>
+
+  <section id="searchView" class="search-view" hidden>
+    <header class="search-head">
+      <h2 id="searchTitle">Results</h2>
+      <span class="ts-spacer"></span>
+      <button id="searchClose" title="Close (Esc)">×</button>
+    </header>
+    <div id="searchResults" class="search-results"></div>
   </section>
 
   <section id="meetingView" class="meeting-view" hidden>
@@ -396,6 +409,24 @@
   </div>
 </div>
 
+<div id="historyModal" class="ts-modal" hidden>
+  <div class="ts-box hist-box">
+    <header class="ts-head">
+      <strong>History</strong>
+      <span id="histNote" class="rel-current"></span>
+      <span class="ts-spacer"></span>
+      <button id="historyClose" type="button">Close</button>
+    </header>
+    <div class="hist-body">
+      <div id="histList" class="hist-list"></div>
+      <div class="hist-preview-wrap">
+        <div id="histPreview" class="hist-preview rendered"></div>
+        <button id="histRestore" class="btn-accent" disabled>Restore this version</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="whatsNewModal" class="ts-modal" hidden>
   <div class="ts-box rel-box">
     <header class="ts-head">
@@ -425,6 +456,9 @@
           <div><dt><kbd>⌘E</kbd></dt><dd>Edit ↔ preview</dd></div>
           <div><dt><kbd>⌘S</kbd></dt><dd>Save</dd></div>
           <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous / next note in the list</dd></div>
+          <div><dt><kbd>⌘D</kbd></dt><dd>Quick notes — today’s note</dd></div>
+          <div><dt><kbd>⌥Space</kbd></dt><dd>Quick capture — from anywhere on the Mac (desktop app)</dd></div>
+          <div><dt><kbd>Enter</kbd></dt><dd>…in the search box: full-text results with snippets</dd></div>
           <div><dt><kbd>⌘/</kbd></dt><dd>This cheat sheet</dd></div>
           <div><dt><kbd>Esc</kbd></dt><dd>Close dialogs, search &amp; presentations</dd></div>
         </dl>

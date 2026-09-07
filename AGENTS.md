@@ -193,6 +193,27 @@ audio/video file or a direct media URL (POST `/api/fetch-media` downloads it),
 creates a Meeting note and starts transcription + summary automatically —
 for analyzing meetings you weren't at.
 
+## Daily notes & quick capture
+
+`notes/YYYY-MM-DD.md` (tag `Daily`) is the daily "quick notes" note — ⌘D or
+the sidebar's ⚡ Quick notes button opens/creates today's (from
+`templates/daily.md` when one exists). Quick capture (global ⌥Space in the desktop app, or the `#capture`
+hash route) appends timestamped bullets:
+
+```markdown
+- **14:32** the captured text
+```
+
+Agents adding quick entries to a daily note should use the same bullet shape.
+
+## Version history
+
+Every API/app save snapshots the note's previous content to
+`.history/<file>/<stamp>.md` automatically (identical saves skipped, 100
+versions kept per note; locked notes stash ciphertext). The user browses and
+restores via ⋯ → History. Renames move the history along; a restore snapshots
+the replaced content first, so nothing is ever lost.
+
 ## Todos
 
 `notes/Todos.md` holds the todo list as ordinary task-list lines; the app's
@@ -228,6 +249,9 @@ use with the `Todos` tag; a `!time` without a date means today.
 | POST `/api/summarize` | `{"text","title"}` | meeting summary via local `claude` CLI |
 | POST `/api/todo-suggest` | `{"text","title"}` | action items as `{suggestions:[…]}` via local `claude` CLI |
 | GET `/api/templates` · GET `/api/templates/<file>` | — | list templates / raw template |
+| GET `/api/history/<file>` | — | version list `[{stamp,size}]`, newest first |
+| GET `/api/history/<file>/<stamp>` | — | that version's raw markdown |
+| POST `/api/history/restore` | `{"file","stamp"}` | writes the old version back (current content is snapshotted first) |
 | GET `/api/backup` | — | zip of `notes/` + `attachments/` + `templates/` |
 | POST `/api/restore` | zip binary | extracts notes/attachments (overwrite); snapshots current state to `.backups/` first |
 | POST `/api/client-log` | `{"msg"}` | appends a timestamped line to `.client-debug.log` (renderer debug trail) |

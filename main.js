@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, screen, ipcMain, dialog, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, shell, screen, ipcMain, dialog, session, desktopCapturer, globalShortcut } = require('electron');
 
 // System-audio loopback for the meeting recorder: Chromium supports it on
 // macOS 13+ via ScreenCaptureKit / Core Audio taps, but only behind these
@@ -205,6 +205,12 @@ ipcMain.handle('backup:save', async () => {
   }
 });
 
+let captureWin = null;
+ipcMain.on('capture:hide', () => {
+  if (captureWin && !captureWin.isDestroyed()) captureWin.hide();
+});
+app.on('will-quit', () => globalShortcut.unregisterAll());
+
 app.whenReady().then(async () => {
   try {
     await start();
@@ -226,6 +232,45 @@ app.whenReady().then(async () => {
     });
   } catch (err) {
     dbg('display media handler failed: ' + err.message);
+  }
+
+  // Quick capture: a small always-on-top window on a global shortcut.
+  // Blur hides it; the shortcut toggles it back with the field cleared.
+  const toggleCapture = () => {
+    if (captureWin && !captureWin.isDestroyed()) {
+      if (captureWin.isVisible()) { captureWin.hide(); return; }
+      captureWin.show();
+      captureWin.focus();
+      captureWin.webContents.send('capture:reset');
+      return;
+    }
+    captureWin = new BrowserWindow({
+      width: 620,
+      height: 150,
+      frame: false,
+      resizable: false,
+      show: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      webPreferences: { preload: path.join(__dirname, 'preload.js') }
+    });
+    captureWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    captureWin.loadURL(`http://127.0.0.1:${PORT}/#capture`);
+    captureWin.once('ready-to-show', () => {
+      captureWin.center();
+      const [x] = captureWin.getPosition();
+      captureWin.setPosition(x, 180);
+      captureWin.show();
+    });
+    captureWin.on('blur', () => { if (captureWin && !captureWin.isDestroyed()) captureWin.hide(); });
+  };
+  if (!globalShortcut.register('Alt+Space', toggleCapture)) {
+    // taken by another app (Alfred/Raycast style launchers) — try a fallback
+    if (globalShortcut.register('CommandOrControl+Shift+Space', toggleCapture)) {
+      dbg('capture shortcut: Alt+Space taken, using Cmd+Shift+Space');
+    } else {
+      dbg('capture shortcut: could not register');
+    }
   }
 
   createWindow();

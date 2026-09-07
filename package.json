@@ -1,7 +1,7 @@
 {
   "name": "notes",
   "productName": "Notes",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "description": "Desktop app for viewing, editing and searching markdown notes (migrated from Notable)",
   "main": "main.js",

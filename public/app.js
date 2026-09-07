@@ -730,6 +730,7 @@ function showNote(note) {
   $('trashView').hidden = true;
   $('meetingView').hidden = true;
   $('todoView').hidden = true;
+  $('searchView').hidden = true;
   $('renameWrap').hidden = true;
   $('editorWrap').hidden = true;
   $('rendered').hidden = false;
@@ -2196,6 +2197,7 @@ function openMeetingView() {
   $('noteView').hidden = true;
   $('trashView').hidden = true;
   $('todoView').hidden = true;
+  $('searchView').hidden = true;
   $('meetingView').hidden = false;
   closeFind();
   document.title = 'Meeting — Marknote';
@@ -3247,6 +3249,7 @@ async function openTrash() {
   $('noteView').hidden = true;
   $('meetingView').hidden = true;
   $('todoView').hidden = true;
+  $('searchView').hidden = true;
   $('trashView').hidden = false;
   closeFind();
   document.title = 'Trash — Marknote';
@@ -3354,6 +3357,9 @@ document.addEventListener('keydown', (e) => {
   } else if (mod && e.key === 'e' && state.current) {
     e.preventDefault();
     state.editing ? exitEdit({ save: true }) : enterEdit();
+  } else if (mod && e.key === 'd') {
+    e.preventDefault();
+    openToday();
   } else if (mod && e.key === '/') {
     e.preventDefault();
     toggleShortcuts();
@@ -3536,6 +3542,7 @@ async function openTodoView() {
   $('noteView').hidden = true;
   $('meetingView').hidden = true;
   $('trashView').hidden = true;
+  $('searchView').hidden = true;
   $('todoView').hidden = false;
   closeFind();
   document.title = 'Todos — Marknote';
@@ -3548,6 +3555,7 @@ async function openTodoView() {
 $('todosBtn').addEventListener('click', openTodoView);
 $('todoClose').addEventListener('click', () => {
   $('todoView').hidden = true;
+  $('searchView').hidden = true;
   if (state.current) {
     $('noteView').hidden = false;
     document.title = state.current.title + ' — Marknote';
@@ -4056,6 +4064,7 @@ async function bootPrintMode(deckMode) {
 }
 if (location.hash.startsWith('#print/')) bootPrintMode(false);
 else if (location.hash.startsWith('#printdeck/')) bootPrintMode(true);
+else if (location.hash === '#capture') bootCaptureMode();
 
 $('pdfBtn').addEventListener('click', async () => {
   const note = state.current;
@@ -4311,7 +4320,9 @@ $('saveTemplateBtn').addEventListener('click', async () => {
 });
 
 async function bodyFromTemplate(file, title) {
-  const raw = await fetch('/api/templates/' + encodeURIComponent(file)).then((r) => r.text());
+  const res = await fetch('/api/templates/' + encodeURIComponent(file));
+  if (!res.ok) throw new Error('template not found');
+  const raw = await res.text();
   const { body, tags } = (() => {
     // reuse the server's front-matter shape client-side
     if (!raw.startsWith('---')) return { body: raw, tags: [] };
@@ -5228,3 +5239,285 @@ document.addEventListener('keydown', (e) => {
     $('whatsNewModal').hidden = true;
   }
 }, true);
+
+/* ——— daily notes & quick capture ——— */
+// Daily notes are titled YYYY-MM-DD (tag Daily). ⌘D / the 📅 Today button
+// opens today's, creating it from the daily.md template when one exists.
+// Quick capture (global ⌥Space in the desktop app) appends "- **HH:MM** text"
+// bullets to today's note without leaving whatever you're doing.
+
+const todayTitle = () => {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+};
+
+async function fillFromDailyTemplate(raw, title) {
+  try {
+    const { body, tags } = await bodyFromTemplate('daily.md', title);
+    if (tags.length) raw = setTagsInRaw(raw, tags);
+    return raw.slice(0, frontmatterEndIndex(raw)) + '\n' + body;
+  } catch {
+    return raw; // no daily template — the created note keeps its plain heading
+  }
+}
+
+async function openToday() {
+  const title = todayTitle();
+  let note = state.notes.find((n) => n.title === title);
+  if (!note) {
+    const { file } = await api.create(title);
+    let raw = await api.raw(file);
+    raw = await fillFromDailyTemplate(raw, title);
+    await api.save(file, raw);
+    state.notes = await api.list();
+    renderTags();
+    renderList();
+    note = state.notes.find((n) => n.file === file);
+  }
+  if (note) openNote(note.file);
+}
+
+$('todayBtn').addEventListener('click', openToday);
+
+async function appendCapture(text) {
+  const title = todayTitle();
+  const file = title + '.md';
+  let raw;
+  try {
+    raw = await api.raw(file);
+  } catch {
+    const created = await api.create(title);
+    raw = await api.raw(created.file);
+    raw = await fillFromDailyTemplate(raw, title);
+    if (created.file !== file) {
+      // a differently-named file with today's title already existed — append there
+      return appendToRaw(created.file, raw, text);
+    }
+  }
+  return appendToRaw(file, raw, text);
+}
+
+function appendToRaw(file, raw, text) {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const entry = `- **${p2(d.getHours())}:${p2(d.getMinutes())}** ` + text.replace(/\n/g, '\n  ');
+  return api.save(file, raw.replace(/\n*$/, '\n') + entry + '\n');
+}
+
+function bootCaptureMode() {
+  document.title = 'Capture — Marknote';
+  document.body.classList.add('capture-mode');
+  const ui = document.createElement('div');
+  ui.className = 'capture-box';
+  ui.innerHTML =
+    '<textarea id="capText" placeholder="Jot it down — lands in today’s note" rows="3"></textarea>' +
+    '<div class="capture-hint"><span>⏎ save</span><span>⇧⏎ new line</span><span>esc close</span><span id="capState"></span></div>';
+  document.body.appendChild(ui);
+  const box = ui.querySelector('#capText');
+  const st = ui.querySelector('#capState');
+  box.focus();
+  const hideWin = () => {
+    if (window.marknoteNative && window.marknoteNative.captureHide) window.marknoteNative.captureHide();
+  };
+  if (window.marknoteNative && window.marknoteNative.onCaptureReset) {
+    window.marknoteNative.onCaptureReset(() => {
+      box.value = '';
+      st.textContent = '';
+      box.focus();
+    });
+  }
+  box.addEventListener('keydown', async (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); hideWin(); return; }
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    const text = box.value.trim();
+    if (!text) { hideWin(); return; }
+    st.textContent = 'Saving…';
+    try {
+      await appendCapture(text);
+      st.textContent = 'Saved ✓';
+      box.value = '';
+      setTimeout(hideWin, 350);
+    } catch (err) {
+      st.textContent = 'Failed: ' + err.message;
+    }
+  });
+}
+
+/* ——— full-text search view ——— */
+// Enter in the sidebar search opens a results page: every note ranked by
+// match count, with highlighted snippets. Clicking a result opens the note
+// with the find bar pre-armed on the same query. Locked bodies are skipped
+// (title matches only).
+
+function searchNote(note, q) {
+  const locked = isLockedBody(note.body);
+  const body = locked ? '' : note.body;
+  const lq = q.toLowerCase();
+  const titleHit = note.title.toLowerCase().includes(lq);
+  const positions = [];
+  const lower = body.toLowerCase();
+  let i = lower.indexOf(lq);
+  while (i !== -1 && positions.length < 50) {
+    positions.push(i);
+    i = lower.indexOf(lq, i + lq.length);
+  }
+  if (!titleHit && !positions.length) return null;
+  const snippets = positions.slice(0, 3).map((pos) => {
+    const from = Math.max(0, pos - 45);
+    const to = Math.min(body.length, pos + q.length + 60);
+    const pre = (from > 0 ? '…' : '') + body.slice(from, pos);
+    const post = body.slice(pos + q.length, to) + (to < body.length ? '…' : '');
+    return (
+      escapeHtml(pre.replace(/\n/g, ' ')) +
+      '<mark>' + escapeHtml(body.slice(pos, pos + q.length)) + '</mark>' +
+      escapeHtml(post.replace(/\n/g, ' '))
+    );
+  });
+  return { note, titleHit, locked, count: positions.length + (titleHit ? 1 : 0), snippets };
+}
+
+let searchQ = '';
+
+function renderSearchResults(q) {
+  searchQ = q;
+  const box = $('searchResults');
+  if (!q || q.length < 2) {
+    $('searchTitle').textContent = 'Search';
+    box.innerHTML = '<div class="rel-loading">Type at least two characters…</div>';
+    return;
+  }
+  const hits = state.notes
+    .map((n) => searchNote(n, q))
+    .filter(Boolean)
+    .sort((a, b) => b.count - a.count);
+  $('searchTitle').textContent = `“${q}” — ${hits.length} note${hits.length === 1 ? '' : 's'}`;
+  box.innerHTML = hits.length
+    ? hits.map((h) => `
+      <button class="search-hit" data-file="${escapeHtml(h.note.file)}">
+        <div class="sh-title">${escapeHtml(h.note.title)}${h.locked ? ' <span class="sh-lock">🔒 title match</span>' : ''}<span class="sh-count">${h.count}</span></div>
+        ${h.snippets.map((s) => `<div class="sh-snip">${s}</div>`).join('')}
+      </button>`).join('')
+    : '<div class="rel-loading">No matches.</div>';
+}
+
+function openSearchView(q) {
+  $('empty').hidden = true;
+  $('noteView').hidden = true;
+  $('meetingView').hidden = true;
+  $('trashView').hidden = true;
+  $('todoView').hidden = true;
+  $('searchView').hidden = false;
+  closeFind();
+  document.title = 'Search — Marknote';
+  renderSearchResults(q);
+}
+
+function closeSearchView() {
+  $('searchView').hidden = true;
+  if (state.current) {
+    $('noteView').hidden = false;
+    document.title = state.current.title + ' — Marknote';
+  } else {
+    $('empty').hidden = false;
+    document.title = 'Marknote';
+  }
+}
+
+$('searchClose').addEventListener('click', closeSearchView);
+$('search').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    openSearchView(e.target.value.trim());
+  }
+});
+$('search').addEventListener('input', (e) => {
+  if (!$('searchView').hidden) renderSearchResults(e.target.value.trim());
+});
+$('searchResults').addEventListener('click', (e) => {
+  const hit = e.target.closest('.search-hit');
+  if (!hit) return;
+  const q = searchQ;
+  openNote(hit.dataset.file);
+  // arm the find bar once the note has rendered so the hits get marked
+  setTimeout(() => {
+    $('findInput').value = q;
+    openFind();
+  }, 350);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('searchView').hidden && $('mmModal').hidden && document.activeElement !== $('search')) {
+    e.preventDefault();
+    closeSearchView();
+  }
+});
+
+/* ——— note history ——— */
+
+let histSel = null;
+
+const histStampToIso = (stamp) =>
+  stamp.replace(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d+)Z$/, '$1T$2:$3:$4.$5Z');
+
+async function openHistory() {
+  if (!state.current) return;
+  $('noteMenu').hidden = true;
+  $('historyModal').hidden = false;
+  $('histNote').textContent = state.current.title;
+  $('histPreview').innerHTML = '<div class="rel-loading">Pick a version on the left.</div>';
+  $('histRestore').disabled = true;
+  histSel = null;
+  const items = await fetch('/api/history/' + encodeURIComponent(state.current.file))
+    .then((r) => r.json()).catch(() => []);
+  $('histList').innerHTML = items.length
+    ? items.map((it) => `
+      <button class="hist-item" data-stamp="${it.stamp}">
+        <b>${formatDate(histStampToIso(it.stamp))}</b>
+        <span>${(it.size / 1024).toFixed(1)} kB</span>
+      </button>`).join('')
+    : '<div class="rel-loading">No saved versions yet — history builds up as you save.</div>';
+}
+
+$('historyBtn').addEventListener('click', openHistory);
+$('historyClose').addEventListener('click', () => { $('historyModal').hidden = true; });
+$('historyModal').addEventListener('mousedown', (e) => {
+  if (e.target === $('historyModal')) $('historyModal').hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('historyModal').hidden) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    $('historyModal').hidden = true;
+  }
+}, true);
+
+$('histList').addEventListener('click', async (e) => {
+  const item = e.target.closest('.hist-item');
+  if (!item) return;
+  $('histList').querySelectorAll('.hist-item').forEach((b) => b.classList.toggle('active', b === item));
+  histSel = item.dataset.stamp;
+  const rawOld = await fetch(
+    '/api/history/' + encodeURIComponent(state.current.file) + '/' + encodeURIComponent(histSel)
+  ).then((r) => r.text());
+  const body = rawOld.replace(/^---[\s\S]*?\n---\r?\n?/, '');
+  if (body.includes(LOCK_MARK)) {
+    $('histPreview').innerHTML = '<div class="rel-loading">🔒 This version is encrypted — restoring keeps it locked with the same passphrase.</div>';
+  } else {
+    renderMarkdown($('histPreview'), body);
+  }
+  $('histRestore').disabled = false;
+});
+
+$('histRestore').addEventListener('click', async () => {
+  if (!histSel || !state.current) return;
+  if (state.editing) { alertBar('Close the editor first (⌘E), then restore.'); return; }
+  const updated = await fetch('/api/history/restore', {
+    method: 'POST',
+    body: JSON.stringify({ file: state.current.file, stamp: histSel })
+  }).then((r) => r.json());
+  $('historyModal').hidden = true;
+  applySaved(updated);
+  renderNoteBody(updated);
+  alertBar('Restored — the replaced version was itself saved to history.');
+});

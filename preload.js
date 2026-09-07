@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld('marknoteNative', {
   exportPdf: (file, isDeck, title) => ipcRenderer.invoke('export:pdf', file, isDeck, title),
   onDisplayClosed: (cb) => ipcRenderer.on('present:display-closed', () => cb()),
   saveBackup: () => ipcRenderer.invoke('backup:save'),
-  saveText: (defaultName, content) => ipcRenderer.invoke('save:text', defaultName, content)
+  saveText: (defaultName, content) => ipcRenderer.invoke('save:text', defaultName, content),
+  captureHide: () => ipcRenderer.send('capture:hide'),
+  onCaptureReset: (cb) => ipcRenderer.on('capture:reset', () => cb())
 });

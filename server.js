@@ -20,6 +20,7 @@ const ATTACH_DIR = path.join(DATA_ROOT, 'attachments');
 const TRASH_DIR = path.join(DATA_ROOT, '.trash');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const TEMPLATES_DIR = path.join(DATA_ROOT, 'templates');
+const HISTORY_DIR = path.join(DATA_ROOT, '.history');
 
 let APP_VERSION = '0.0.0';
 try { APP_VERSION = require('./package.json').version || APP_VERSION; } catch { /* dev checkout */ }
@@ -204,6 +205,25 @@ async function listNotes() {
 }
 
 const fileExists = (p) => fsp.access(p).then(() => true, () => false);
+
+// Version history: before a note is overwritten, its previous content is
+// stashed in .history/<file>/<stamp>.md — identical saves are skipped and
+// each note keeps at most 100 versions. Locked notes stash ciphertext.
+async function snapshotNote(file, oldRaw) {
+  const dir = path.join(HISTORY_DIR, file);
+  await fsp.mkdir(dir, { recursive: true });
+  const stamps = (await fsp.readdir(dir)).filter((f) => f.endsWith('.md')).sort();
+  if (stamps.length) {
+    const last = await fsp.readFile(path.join(dir, stamps[stamps.length - 1]), 'utf8');
+    if (last === oldRaw) return;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  await fsp.writeFile(path.join(dir, `${stamp}.md`), oldRaw, 'utf8');
+  const all = stamps.concat(stamp + '.md');
+  for (const extra of all.slice(0, Math.max(0, all.length - 100))) {
+    await fsp.unlink(path.join(dir, extra)).catch(() => {});
+  }
+}
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -698,6 +718,45 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Note templates: plain .md files in templates/ (front-matter title = name).
+    // Version history: restore first (POST), then list/fetch (GET).
+    if (pathname === '/api/history/restore' && req.method === 'POST') {
+      const { file, stamp } = JSON.parse(await readBody(req) || '{}');
+      const safe = safeName(file);
+      const cleanStamp = String(stamp || '').replace(/[^0-9TZ-]/g, '');
+      if (!safe || !cleanStamp) return send(res, 400, { error: 'bad request' });
+      const old = await fsp.readFile(path.join(HISTORY_DIR, safe, cleanStamp + '.md'), 'utf8');
+      const full = path.join(NOTES_DIR, safe);
+      const prev = await fsp.readFile(full, 'utf8').catch(() => null);
+      if (prev !== null && prev !== old) await snapshotNote(safe, prev).catch(() => {});
+      const rawOut = touchModified(old, new Date().toISOString());
+      await fsp.writeFile(full, rawOut, 'utf8');
+      return send(res, 200, noteFromRaw(safe, rawOut, await fsp.stat(full)));
+    }
+    const histOne = pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/);
+    if (histOne && req.method === 'GET') {
+      const file = safeName(histOne[1]);
+      const stamp = histOne[2].replace(/[^0-9TZ-]/g, '');
+      if (!file || !stamp) return send(res, 400, { error: 'bad request' });
+      const rawOld = await fsp.readFile(path.join(HISTORY_DIR, file, stamp + '.md'), 'utf8');
+      return send(res, 200, rawOld, 'text/markdown; charset=utf-8');
+    }
+    const histMatch = pathname.match(/^\/api\/history\/([^/]+)$/);
+    if (histMatch && req.method === 'GET') {
+      const file = safeName(histMatch[1]);
+      if (!file) return send(res, 400, { error: 'bad filename' });
+      const dir = path.join(HISTORY_DIR, file);
+      let items = [];
+      try {
+        items = (await fsp.readdir(dir)).filter((f) => f.endsWith('.md')).sort().reverse();
+      } catch { /* no history yet */ }
+      const out = [];
+      for (const f of items) {
+        const st = await fsp.stat(path.join(dir, f));
+        out.push({ stamp: f.replace(/\.md$/, ''), size: st.size });
+      }
+      return send(res, 200, out);
+    }
+
     if (pathname === '/api/templates' && req.method === 'GET') {
       await fsp.mkdir(TEMPLATES_DIR, { recursive: true });
       const files = (await fsp.readdir(TEMPLATES_DIR)).filter((f) => f.endsWith('.md') && !f.startsWith('.'));
@@ -815,7 +874,10 @@ const server = http.createServer(async (req, res) => {
       // If the body's first heading is the old title, rename it too.
       updated = updated.replace(new RegExp('^# ' + escapeRegExp(oldTitle) + '[ \\t]*$', 'm'), '# ' + clean);
       await fsp.writeFile(path.join(NOTES_DIR, newFile), updated, 'utf8');
-      if (newFile !== safe) await fsp.unlink(oldPath);
+      if (newFile !== safe) {
+        await fsp.unlink(oldPath);
+        await fsp.rename(path.join(HISTORY_DIR, safe), path.join(HISTORY_DIR, newFile)).catch(() => {});
+      }
 
       // Point [[wiki links]] and @note/ references in other notes at the new name.
       let linkUpdates = 0;
@@ -1114,6 +1176,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'PUT') {
         const raw = touchModified(await readBody(req), new Date().toISOString());
+        const prev = await fsp.readFile(full, 'utf8').catch(() => null);
+        if (prev !== null && prev !== raw) await snapshotNote(file, prev).catch(() => {});
         await fsp.writeFile(full, raw, 'utf8');
         const stat = await fsp.stat(full);
         return send(res, 200, noteFromRaw(file, raw, stat));
@@ -1312,6 +1376,13 @@ title: 'Mötesanteckning'
 ## Att göra
 
 - [ ]
+`);
+    await seed('daily.md', `---
+tags: [Daily]
+title: '{{title}}'
+---
+
+# {{title}}
 `);
     console.log('seeded starter templates');
   } catch (err) { console.error('template seed:', err.message); }
