@@ -5182,3 +5182,41 @@ async function checkUpdate() {
   };
 }
 setTimeout(checkUpdate, 3000);
+
+/* ——— what's new: release notes from GitHub ——— */
+
+let relCache = null;
+
+async function openWhatsNew() {
+  $('whatsNewModal').hidden = false;
+  if (!relCache) {
+    try { relCache = await fetch('/api/releases').then((r) => r.json()); } catch { relCache = { releases: [] }; }
+  }
+  const cur = relCache.current;
+  $('relVersion').textContent = caps && caps.bundled && caps.version ? 'you have ' + caps.version : '';
+  const list = $('relList');
+  if (!relCache.releases.length) {
+    list.innerHTML = '<div class="rel-loading">Couldn’t load release notes — are you offline?</div>';
+    return;
+  }
+  list.innerHTML = relCache.releases.map((r) => {
+    const you = r.tag.replace(/^v/, '') === cur ? '<span class="rel-you">installed</span>' : '';
+    return `<div class="rel-entry">
+      <div class="rel-head"><h3>${escapeHtml(r.name)}</h3><span class="rel-date">${formatDate(r.date)}</span>${you}</div>
+      <div class="rel-body">${marked.parse(r.body || '', { gfm: true, breaks: false })}</div>
+    </div>`;
+  }).join('');
+}
+
+$('whatsNewBtn').addEventListener('click', openWhatsNew);
+$('whatsNewClose').addEventListener('click', () => { $('whatsNewModal').hidden = true; });
+$('whatsNewModal').addEventListener('mousedown', (e) => {
+  if (e.target === $('whatsNewModal')) $('whatsNewModal').hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('whatsNewModal').hidden) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    $('whatsNewModal').hidden = true;
+  }
+}, true);

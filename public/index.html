@@ -65,6 +65,7 @@
   <nav id="noteList" class="note-list" aria-label="Notes"></nav>
 
   <button id="updateBtn" class="trash-btn update-btn" hidden>Update</button>
+  <button id="whatsNewBtn" class="trash-btn" title="Release notes — what changed in each version">What’s new</button>
   <span class="backup-wrap">
     <button id="backupBtn" class="trash-btn" title="Export or import all notes + attachments as a zip">Backup</button>
     <div id="backupMenu" class="create-menu backup-menu" hidden>
@@ -389,6 +390,18 @@
       <div class="analyze-lang-row">Spoken language: <span id="analyzeLangSlot"></span></div>
       <div class="analyze-hint">A meeting note is created and transcription + Claude summary start automatically. Links behind logins (Teams/SharePoint) can't be fetched — download the file first.</div>
     </div>
+  </div>
+</div>
+
+<div id="whatsNewModal" class="ts-modal" hidden>
+  <div class="ts-box rel-box">
+    <header class="ts-head">
+      <strong>What’s new</strong>
+      <span id="relVersion" class="rel-current"></span>
+      <span class="ts-spacer"></span>
+      <button id="whatsNewClose" type="button">Close</button>
+    </header>
+    <div id="relList" class="rel-list"><div class="rel-loading">Loading release notes…</div></div>
   </div>
 </div>
 

@@ -440,6 +440,7 @@ function startDownload(kind, dest, finalize, srcOverride) {
    (a running .exe can't swap itself out this easily). */
 const UPDATE_REPO = 'makam92/marknote';
 let updateCache = { at: 0, data: null };
+let releasesCache = { at: 0, data: null };
 
 function cmpVer(a, b) {
   const pa = String(a).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -531,6 +532,37 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, dls.ffmpeg);
     }
 
+    // Release notes for the in-app "What's new" page — newest first, install
+    // boilerplate trimmed off. Cached 6h.
+    if (pathname === '/api/releases' && req.method === 'GET') {
+      if (releasesCache.data && Date.now() - releasesCache.at < 6 * 3600 * 1000) {
+        return send(res, 200, releasesCache.data);
+      }
+      try {
+        const out = await new Promise((resolve, reject) => {
+          execFile(
+            CURL,
+            ['-fsSL', '-H', 'User-Agent: marknote', '-H', 'Accept: application/vnd.github+json',
+              `https://api.github.com/repos/${UPDATE_REPO}/releases?per_page=20`],
+            { maxBuffer: 8 * 1024 * 1024 },
+            (err, o) => (err ? reject(new Error('release list failed')) : resolve(o))
+          );
+        });
+        const list = JSON.parse(out).map((r) => ({
+          tag: r.tag_name,
+          name: r.name || r.tag_name,
+          date: r.published_at,
+          body: String(r.body || '').split(/\r?\n## Install/)[0]
+            .replace(/\n+[^\n]*Otherwise:\s*$/, '').trim(),
+          url: r.html_url
+        }));
+        releasesCache = { at: Date.now(), data: { current: APP_VERSION, releases: list } };
+        return send(res, 200, releasesCache.data);
+      } catch (err) {
+        return send(res, 200, { current: APP_VERSION, releases: [], error: err.message });
+      }
+    }
+
     // Update check: cached 6h; ?force=1 asks GitHub again. Dev checkouts
     // (non-bundled) never see updates — code comes from git there.
     if (pathname === '/api/update-check' && req.method === 'GET') {
@@ -617,6 +649,8 @@ const server = http.createServer(async (req, res) => {
     // setup guidance instead of raw errors.
     if (pathname === '/api/capabilities' && req.method === 'GET') {
       return send(res, 200, {
+        version: APP_VERSION,
+        bundled: BUNDLED,
         whisper: !!whisperBinPath(),
         whisperModel: await fileExists(whisperModelPath()),
         ffmpeg: !!ffmpegPath(),
