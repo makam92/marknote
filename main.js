@@ -1,4 +1,12 @@
-const { app, BrowserWindow, shell, screen, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, screen, ipcMain, dialog, session, desktopCapturer } = require('electron');
+
+// System-audio loopback for the meeting recorder: Chromium supports it on
+// macOS 13+ via ScreenCaptureKit / Core Audio taps, but only behind these
+// feature flags (harmless on other platforms; Windows has native loopback).
+app.commandLine.appendSwitch(
+  'enable-features',
+  'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride'
+);
 const path = require('path');
 const fs = require('fs');
 const { start, PORT, DATA_ROOT } = require('./server');
@@ -204,6 +212,22 @@ app.whenReady().then(async () => {
     // Port already taken — assume another instance's server is running and reuse it.
     if (err.code !== 'EADDRINUSE') throw err;
   }
+
+  // System-audio capture for the meeting recorder ("Include computer audio"):
+  // the handler picks the primary screen itself (no picker dialog) and asks
+  // for the loopback audio device — real system audio on Windows natively
+  // and on macOS 13+ via the feature flags enabled at the top of this file.
+  // The renderer only uses the audio; the video track is never recorded.
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+        callback({ video: sources[0], audio: 'loopback' });
+      }).catch(() => callback({}));
+    });
+  } catch (err) {
+    dbg('display media handler failed: ' + err.message);
+  }
+
   createWindow();
 
   app.on('activate', () => {

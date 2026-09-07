@@ -230,6 +230,7 @@ use with the `Todos` tag; a `!time` without a date means today.
 | GET `/api/templates` · GET `/api/templates/<file>` | — | list templates / raw template |
 | GET `/api/backup` | — | zip of `notes/` + `attachments/` + `templates/` |
 | POST `/api/restore` | zip binary | extracts notes/attachments (overwrite); snapshots current state to `.backups/` first |
+| POST `/api/client-log` | `{"msg"}` | appends a timestamped line to `.client-debug.log` (renderer debug trail) |
 | GET `/api/update-check` | — | app version vs latest GitHub release (bundled apps only; `?force=1` skips the 6h cache) |
 | POST `/api/update-run` | — | macOS self-update: downloads the release zip, swaps the app bundle, relaunches; GET polls progress |
 

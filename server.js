@@ -603,6 +603,16 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, dls.update);
     }
 
+    // Renderer-side debug trail (system-audio capture etc.) — appended to
+    // .client-debug.log in the data dir so problems on colleagues' machines
+    // can be read out after the fact.
+    if (pathname === '/api/client-log' && req.method === 'POST') {
+      const { msg } = JSON.parse(await readBody(req) || '{}');
+      const line = new Date().toISOString() + ' ' + String(msg || '').slice(0, 2000) + '\n';
+      fsp.appendFile(path.join(DATA_ROOT, '.client-debug.log'), line).catch(() => {});
+      return send(res, 200, { ok: true });
+    }
+
     // What optional helpers are installed? The UI uses this to show friendly
     // setup guidance instead of raw errors.
     if (pathname === '/api/capabilities' && req.method === 'GET') {

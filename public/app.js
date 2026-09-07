@@ -2231,7 +2231,19 @@ async function startMeeting() {
   rec.streamQ = Promise.resolve();
   rec.streamOk = true;
   rec.chunks = [];
-  rec.recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+  // Everything records through a WebAudio mix: mic always, plus (optionally)
+  // system audio — which can be added or removed live mid-recording.
+  rec.ctx = new AudioContext();
+  // a suspended context records pure silence — resume defensively (a real
+  // click precedes this in the app, but belt and suspenders)
+  if (rec.ctx.state === 'suspended') rec.ctx.resume().catch(() => { /* gesture policy */ });
+  rec.mix = rec.ctx.createMediaStreamDestination();
+  rec.micStream = stream;
+  rec.micSrc = rec.ctx.createMediaStreamSource(stream);
+  rec.micSrc.connect(rec.mix);
+  rec.sysStream = null;
+  rec.sysSrc = null;
+  rec.recorder = new MediaRecorder(rec.mix.stream, { mimeType: 'audio/webm;codecs=opus' });
   rec.recorder.ondataavailable = (e) => {
     if (!e.data.size) return;
     rec.chunks.push(e.data);
@@ -2252,10 +2264,17 @@ async function startMeeting() {
   rec.segStart = Date.now();
   rec.nextRemindMs = 60 * 60 * 1000;
   rec.wave = [];
-  rec.ctx = new AudioContext();
   rec.analyser = rec.ctx.createAnalyser();
   rec.analyser.fftSize = 512;
-  rec.ctx.createMediaStreamSource(stream).connect(rec.analyser);
+  rec.ctx.createMediaStreamSource(rec.mix.stream).connect(rec.analyser);
+  const sysBox = $('meetSysAudio');
+  sysBox.checked = false;
+  let rememberSys = false;
+  try { rememberSys = localStorage.getItem('mn-sysaudio') === '1'; } catch { /* private mode */ }
+  if (rememberSys) {
+    sysBox.checked = true;
+    setSystemAudio(true);
+  }
 
   const p = (n) => String(n).padStart(2, '0');
   const now = new Date();
@@ -2325,6 +2344,70 @@ function drawMeetingWave() {
   });
 }
 
+// "Include computer audio": grabs a display stream for its system audio and
+// mixes it in live. The video track is kept (stopping it can end the whole
+// capture on some platforms) but never recorded. In the desktop app, Windows
+// gets silent loopback; macOS 15+ shows the native share picker once.
+async function setSystemAudio(on) {
+  const box = $('meetSysAudio');
+  if (!rec.recorder || !rec.ctx) return;
+  if (!on) {
+    if (rec.sysSrc) { try { rec.sysSrc.disconnect(); } catch { /* already gone */ } rec.sysSrc = null; }
+    if (rec.sysStream) { rec.sysStream.getTracks().forEach((t) => t.stop()); rec.sysStream = null; }
+    try { localStorage.setItem('mn-sysaudio', '0'); } catch { /* private mode */ }
+    return;
+  }
+  try {
+    clog('requesting display media…');
+    const disp = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    if (!rec.recorder) { disp.getTracks().forEach((t) => t.stop()); return; }
+    const at = disp.getAudioTracks();
+    clog(`got stream: video=${disp.getVideoTracks().length} audio=${at.length}` +
+      (at[0] ? ` label="${at[0].label}" muted=${at[0].muted} state=${at[0].readyState}` : ''));
+    if (at[0]) {
+      // measure 1.2s of captured level so the log shows silence vs signal
+      const probeSrc = rec.ctx.createMediaStreamSource(disp);
+      const an = rec.ctx.createAnalyser();
+      an.fftSize = 2048;
+      probeSrc.connect(an);
+      setTimeout(() => {
+        const buf = new Float32Array(an.fftSize);
+        an.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        clog('captured RMS after 1.2s: ' + Math.sqrt(sum / buf.length).toFixed(5));
+        try { probeSrc.disconnect(); } catch { /* torn down */ }
+      }, 1200);
+    }
+    if (!disp.getAudioTracks().length) {
+      disp.getTracks().forEach((t) => t.stop());
+      throw new Error('the shared source carried no audio (needs Windows, or macOS 13+)');
+    }
+    rec.sysStream = disp;
+    rec.sysSrc = rec.ctx.createMediaStreamSource(disp);
+    rec.sysSrc.connect(rec.mix);
+    try { localStorage.setItem('mn-sysaudio', '1'); } catch { /* private mode */ }
+    // OS-side "stop sharing" should un-tick the box
+    disp.getAudioTracks()[0].addEventListener('ended', () => {
+      box.checked = false;
+      setSystemAudio(false);
+    });
+  } catch (err) {
+    clog('FAILED: ' + err.name + ' — ' + err.message);
+    box.checked = false;
+    const why = err.name === 'NotAllowedError'
+      ? 'permission missing — allow Marknote under System Settings → Privacy & Security → Screen & System Audio Recording, then restart the app'
+      : err.message;
+    alertBar('Computer audio not captured — ' + why + '. Recording the mic only.');
+  }
+}
+
+function clog(msg) {
+  fetch('/api/client-log', { method: 'POST', body: JSON.stringify({ msg: 'sysaudio: ' + msg }) }).catch(() => {});
+}
+
+$('meetSysAudio').addEventListener('change', (e) => setSystemAudio(e.target.checked));
+
 function togglePauseMeeting() {
   if (!rec.recorder) return;
   if (rec.paused) {
@@ -2345,6 +2428,11 @@ function teardownMeeting() {
   cancelAnimationFrame(rec.raf);
   clearInterval(rec.timerInt);
   if (rec.recorder) rec.recorder.stream.getTracks().forEach((t) => t.stop());
+  if (rec.micStream) { rec.micStream.getTracks().forEach((t) => t.stop()); rec.micStream = null; }
+  if (rec.sysStream) { rec.sysStream.getTracks().forEach((t) => t.stop()); rec.sysStream = null; }
+  rec.micSrc = null;
+  rec.sysSrc = null;
+  rec.mix = null;
   if (rec.ctx) rec.ctx.close();
   rec.recorder = null;
   rec.chunks = [];
