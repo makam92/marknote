@@ -5125,6 +5125,7 @@ function toggleShortcuts() {
 }
 
 $('hintShortcuts').addEventListener('click', toggleShortcuts);
+$('shortcutFootBtn').addEventListener('click', toggleShortcuts);
 $('shortcutClose').addEventListener('click', toggleShortcuts);
 $('shortcutModal').addEventListener('mousedown', (e) => {
   if (e.target === $('shortcutModal')) $('shortcutModal').hidden = true;
