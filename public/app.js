@@ -4826,9 +4826,11 @@ async function startAnalyze(fileBlob, url) {
 // failing with a raw error.
 
 let caps = null;
-(async () => {
+async function refreshCaps() {
   try { caps = await fetch('/api/capabilities').then((r) => r.json()); } catch (e) { /* offline */ }
-})();
+  return caps;
+}
+refreshCaps();
 
 const CLAUDE_HINT = 'Requires the Claude Code CLI — install from https://claude.com/claude-code and sign in once.';
 
@@ -4883,6 +4885,15 @@ function openSetupModal() {
   $('setupProgressWrap').hidden = true;
   $('setupStatus').hidden = true;
   $('setupModal').hidden = false;
+  // a brew install in a terminal doesn't announce itself — re-check live so
+  // "reopen this dialog" actually shows the new state (no app restart needed)
+  refreshCaps().then(() => {
+    refreshSetupRows();
+    if (caps && caps.ffmpeg && caps.whisperModel && caps.whisper) {
+      $('setupStatus').textContent = 'All set — transcription is ready. Run your action again!';
+      $('setupStatus').hidden = false;
+    }
+  });
 }
 
 $('setupClose').addEventListener('click', () => {
