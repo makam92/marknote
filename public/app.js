@@ -397,6 +397,7 @@ function renderMarkdown(el, body, opts = {}) {
 function visibleNotes() {
   const q = state.query.trim().toLowerCase();
   let notes = state.notes.filter((n) => {
+    if (n.archived) return false;
     if (state.tag && !n.tags.includes(state.tag)) return false;
     if (!q) return true;
     return (
@@ -464,7 +465,10 @@ function renderList() {
 
 function tagCounts() {
   const counts = new Map();
-  for (const n of state.notes) for (const t of n.tags) counts.set(t, (counts.get(t) || 0) + 1);
+  for (const n of state.notes) {
+    if (n.archived) continue;
+    for (const t of n.tags) counts.set(t, (counts.get(t) || 0) + 1);
+  }
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'sv'));
 }
 
@@ -484,7 +488,7 @@ function renderTags() {
   );
   list.innerHTML =
     `<button class="label-row${state.tag === null ? ' active' : ''}" data-all="1">
-      <span class="label-name">All notes</span><span class="label-count">${state.notes.length}</span>
+      <span class="label-name">All notes</span><span class="label-count">${state.notes.filter((n) => !n.archived).length}</span>
     </button>` + rows.join('');
 }
 
@@ -731,6 +735,7 @@ function showNote(note) {
   $('meetingView').hidden = true;
   $('todoView').hidden = true;
   $('searchView').hidden = true;
+  $('archView').hidden = true;
   $('renameWrap').hidden = true;
   $('editorWrap').hidden = true;
   $('rendered').hidden = false;
@@ -748,6 +753,7 @@ function showNote(note) {
   $('dlTranscriptBtn').hidden = !note.body.includes('## Transcript') || isLockedBody(note.body);
   syncMenuSections();
   updateLockMenu(note);
+  syncArchiveMenu();
   closeFind();
   renderBacklinks(note);
   $('editBtn').textContent = 'Edit';
@@ -1711,6 +1717,7 @@ async function openPresentation() {
   });
   playSlideSound(deck.getCurrentSlide());
   if (presMusic && presMusic.startAt === 0) startPresentationMusic();
+  await applyLiveBrand($('presentView'), body);
 }
 
 function closePresentation() {
@@ -1834,6 +1841,7 @@ async function renderDeckPreview() {
   const fg = (chunk.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
   box.style.color = fg || '';
   await renderMermaidStatic(box);
+  applyLiveBrand(box, deckEd.slides[0] || '', true);
 }
 
 function scheduleDeckPreview() {
@@ -1874,6 +1882,7 @@ async function openDeckEditor() {
   deckEd.open = true;
   const tr = (deckEd.slides[0].match(/<!--\s*transition:\s*([\w-]+)\s*-->/) || [])[1] || '';
   $('deckTransition').value = ['slide', 'fade', 'zoom', 'convex', 'concave', 'none'].includes(tr) ? tr : '';
+  $('deckBrand').checked = /<!--\s*brand\s*-->/.test(deckEd.slides[0] || '');
   syncSlideTransitionSelect();
   syncSlideBg();
   syncSlideFg();
@@ -2198,6 +2207,7 @@ function openMeetingView() {
   $('trashView').hidden = true;
   $('todoView').hidden = true;
   $('searchView').hidden = true;
+  $('archView').hidden = true;
   $('meetingView').hidden = false;
   closeFind();
   document.title = 'Meeting — Marknote';
@@ -3250,6 +3260,7 @@ async function openTrash() {
   $('meetingView').hidden = true;
   $('todoView').hidden = true;
   $('searchView').hidden = true;
+  $('archView').hidden = true;
   $('trashView').hidden = false;
   closeFind();
   document.title = 'Trash — Marknote';
@@ -3543,6 +3554,7 @@ async function openTodoView() {
   $('meetingView').hidden = true;
   $('trashView').hidden = true;
   $('searchView').hidden = true;
+  $('archView').hidden = true;
   $('todoView').hidden = false;
   closeFind();
   document.title = 'Todos — Marknote';
@@ -3556,6 +3568,7 @@ $('todosBtn').addEventListener('click', openTodoView);
 $('todoClose').addEventListener('click', () => {
   $('todoView').hidden = true;
   $('searchView').hidden = true;
+  $('archView').hidden = true;
   if (state.current) {
     $('noteView').hidden = false;
     document.title = state.current.title + ' — Marknote';
@@ -5453,7 +5466,7 @@ function renderSearchResults(q) {
   box.innerHTML = hits.length
     ? hits.map((h) => `
       <button class="search-hit" data-file="${escapeHtml(h.note.file)}">
-        <div class="sh-title">${escapeHtml(h.note.title)}${h.locked ? ' <span class="sh-lock">🔒 title match</span>' : ''}<span class="sh-count">${h.count}</span></div>
+        <div class="sh-title">${escapeHtml(h.note.title)}${h.locked ? ' <span class="sh-lock">🔒 title match</span>' : ''}${h.note.archived ? ' <span class="sh-lock">🗃 archived</span>' : ''}<span class="sh-count">${h.count}</span></div>
         ${h.snippets.map((s) => `<div class="sh-snip">${s}</div>`).join('')}
       </button>`).join('')
     : '<div class="rel-loading">No matches.</div>';
@@ -5465,6 +5478,7 @@ function openSearchView(q) {
   $('meetingView').hidden = true;
   $('trashView').hidden = true;
   $('todoView').hidden = true;
+  $('archView').hidden = true;
   $('searchView').hidden = false;
   closeFind();
   document.title = 'Search — Marknote';
@@ -5473,6 +5487,7 @@ function openSearchView(q) {
 
 function closeSearchView() {
   $('searchView').hidden = true;
+  $('archView').hidden = true;
   if (state.current) {
     $('noteView').hidden = false;
     document.title = state.current.title + ' — Marknote';
@@ -5666,3 +5681,129 @@ $('brandExport').addEventListener('click', async () => {
     );
   }
 });
+
+/* ——— archive ——— */
+// archived: true in front matter tucks a note away: hidden from the list and
+// label counts, still searchable (🗃 badge) and linkable. The 🗃 footer
+// button lists them; ⋯ → Archive toggles.
+
+function setArchivedInRaw(raw, archived) {
+  const line = archived ? 'archived: true' : null;
+  if (raw.startsWith('---')) {
+    const end = raw.indexOf('\n---', 3);
+    if (end !== -1) {
+      const headerStart = raw.indexOf('\n') + 1;
+      const lines = raw.slice(headerStart, end).split('\n').filter((l) => !/^archived:/.test(l));
+      if (line) lines.unshift(line);
+      return raw.slice(0, headerStart) + lines.join('\n') + raw.slice(end);
+    }
+  }
+  return line ? `---\n${line}\n---\n\n` + raw : raw;
+}
+
+async function toggleArchive() {
+  const note = state.current;
+  if (!note) return;
+  $('noteMenu').hidden = true;
+  const raw = await api.raw(note.file);
+  const updated = await api.save(note.file, setArchivedInRaw(raw, !note.archived));
+  applySaved(updated);
+  syncArchiveMenu();
+  updateArchCount();
+  alertBar(updated.archived ? 'Archived — find it under 🗃 or via search' : 'Back in the list');
+}
+
+function syncArchiveMenu() {
+  const label = $('archiveBtn').querySelector('.al');
+  if (label) label.textContent = state.current && state.current.archived ? 'Unarchive' : 'Archive';
+}
+
+function updateArchCount() {
+  const n = state.notes.filter((x) => x.archived).length;
+  $('archCount').textContent = n ? String(n) : '';
+}
+
+function openArchView() {
+  $('empty').hidden = true;
+  $('noteView').hidden = true;
+  $('meetingView').hidden = true;
+  $('trashView').hidden = true;
+  $('todoView').hidden = true;
+  $('searchView').hidden = true;
+  $('archView').hidden = true;
+  $('archView').hidden = false;
+  closeFind();
+  document.title = 'Archive — Marknote';
+  const items = state.notes
+    .filter((n) => n.archived)
+    .sort((a, b) => (a.modified < b.modified ? 1 : -1));
+  $('archList').innerHTML = items.length
+    ? items.map((n) => `
+      <button class="search-hit" data-file="${escapeHtml(n.file)}">
+        <div class="sh-title">${escapeHtml(n.title)}<span class="sh-count">${formatDate(n.modified)}</span></div>
+      </button>`).join('')
+    : '<div class="rel-loading">Nothing archived yet — use ⋯ → Archive on a note.</div>';
+}
+
+$('archBtn').addEventListener('click', openArchView);
+$('archClose').addEventListener('click', () => {
+  $('archView').hidden = true;
+  if (state.current) {
+    $('noteView').hidden = false;
+    document.title = state.current.title + ' — Marknote';
+  } else {
+    $('empty').hidden = false;
+    document.title = 'Marknote';
+  }
+});
+$('archList').addEventListener('click', (e) => {
+  const hit = e.target.closest('.search-hit');
+  if (hit) openNote(hit.dataset.file);
+});
+$('archiveBtn').addEventListener('click', toggleArchive);
+setTimeout(updateArchCount, 1800);
+
+/* ——— live brand theme (<!-- brand --> deck directive) ——— */
+// Applies the saved branding to live presentations and the deck preview:
+// accent color override + a logo/company chip. Toggled per deck via the
+// Brand checkbox in the deck editor (writes the directive on slide 1).
+
+async function applyLiveBrand(host, body, small) {
+  host.querySelectorAll('.live-brand').forEach((el) => el.remove());
+  host.style.removeProperty('--accent');
+  if (!/<!--\s*brand\s*-->/.test(body)) return;
+  const cfg = await fetch('/api/brand').then((r) => r.json()).catch(() => null);
+  if (!cfg) return;
+  if (cfg.accent) host.style.setProperty('--accent', cfg.accent);
+  if (!cfg.logo && !cfg.company) return;
+  const chip = document.createElement('div');
+  chip.className = 'live-brand' + (small ? ' live-brand-sm' : '');
+  if (cfg.logo) chip.insertAdjacentHTML('beforeend', '<img src="/api/brand-logo" alt="">');
+  if (cfg.company) {
+    const s = document.createElement('span');
+    s.textContent = cfg.company;
+    chip.appendChild(s);
+  }
+  host.appendChild(chip);
+}
+
+$('deckBrand').addEventListener('change', (e) => {
+  deckCommitCurrent();
+  deckEd.slides[0] = deckEd.slides[0].replace(/<!--\s*brand\s*-->\n*/g, '').trim();
+  if (e.target.checked) deckEd.slides[0] = `<!-- brand -->\n\n` + deckEd.slides[0];
+  deckEd.dirty = true;
+  dcEl().value = deckEd.slides[deckEd.cur];
+  renderDeckThumbs();
+  renderDeckPreview();
+});
+
+/* ——— "Open with Marknote" from Finder ——— */
+if (window.marknoteNative && window.marknoteNative.onOpenNote) {
+  window.marknoteNative.onOpenNote(async (file) => {
+    state.notes = await api.list();
+    renderTags();
+    renderList();
+    refreshTrashCount();
+    openNote(file);
+  });
+}

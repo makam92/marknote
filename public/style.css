@@ -2722,3 +2722,35 @@ body.print-mode .slide-brand { border: 1px solid #e0dcd3; }
 .pe-company { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #221e17; }
 .pe-rule { width: 44px; height: 4px; border-radius: 3px; background: var(--brand-accent, #b4551d); }
 .pe-author { font-size: 14.5px; color: #6b6459; }
+
+/* ——— live brand chip (presentations + deck preview) ——— */
+.live-brand {
+  position: absolute;
+  left: 26px;
+  bottom: 20px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e0dcd3;
+  border-radius: 9px;
+  padding: 6px 11px;
+  pointer-events: none;
+}
+.live-brand img { max-height: 26px; max-width: 90px; object-fit: contain; display: block; }
+.live-brand span { font-size: 12.5px; font-weight: 600; color: #221e17; white-space: nowrap; }
+.live-brand-sm { left: 12px; bottom: 10px; gap: 6px; padding: 4px 8px; border-radius: 7px; }
+.live-brand-sm img { max-height: 16px; max-width: 60px; }
+.live-brand-sm span { font-size: 10px; }
+.deck-preview { position: relative; }
+.deck-brand-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.deck-brand-toggle input { accent-color: var(--accent); }

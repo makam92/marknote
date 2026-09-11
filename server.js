@@ -136,7 +136,7 @@ function safeName(name) {
 }
 
 function parseFrontmatter(raw) {
-  const meta = { title: null, tags: [], created: null, modified: null, pinned: null };
+  const meta = { title: null, tags: [], created: null, modified: null, pinned: null, archived: null };
   if (!raw.startsWith('---')) return { meta, body: raw };
   const end = raw.indexOf('\n---', 3);
   if (end === -1) return { meta, body: raw };
@@ -186,6 +186,7 @@ function noteFromRaw(file, raw, stat) {
     title: meta.title || file.replace(/\.md$/, ''),
     tags: meta.tags,
     pinned: meta.pinned === 'true',
+    archived: meta.archived === 'true',
     created: meta.created || stat.birthtime.toISOString(),
     modified: meta.modified || stat.mtime.toISOString(),
     body

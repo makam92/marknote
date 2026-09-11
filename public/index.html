@@ -79,6 +79,7 @@
         <button id="backupImport">Import zip…</button>
       </div>
     </span>
+    <button id="archBtn" class="foot-ib foot-trash" title="Archive — tucked-away notes">🗃<span id="archCount"></span></button>
     <button id="trashBtn" class="foot-ib foot-trash" title="Trash — deleted notes">🗑<span id="trashCount"></span></button>
   </div>
 </aside>
@@ -116,6 +117,7 @@
             <div class="cmd-sec" data-sec="organize">Organisera</div>
             <button id="saveTemplateBtn" class="cmd-item"><span class="ci">📄</span>Save as template</button>
             <button id="historyBtn" class="cmd-item"><span class="ci">🕘</span>History</button>
+            <button id="archiveBtn" class="cmd-item"><span class="ci">🗃</span><span class="al">Archive</span></button>
             <button id="removeLockBtn" class="cmd-item" hidden><span class="ci">🔓</span>Remove lock…</button>
             <button id="renameBtn" class="cmd-item"><span class="ci">✏️</span>Rename</button>
             <button id="deleteBtn" class="cmd-item danger"><span class="ci">🗑</span><span class="dl">Delete</span></button>
@@ -195,6 +197,15 @@
     </div>
     <footer id="backlinks" class="backlinks" hidden></footer>
   </article>
+
+  <section id="archView" class="trash-view" hidden>
+    <header class="trash-head">
+      <h2>Archive</h2>
+      <button id="archClose" title="Back to notes">Close</button>
+    </header>
+    <p class="trash-note">Archived notes are out of the way but never gone — they still show up in search, and links to them keep working.</p>
+    <div id="archList"></div>
+  </section>
 
   <section id="trashView" class="trash-view" hidden>
     <header class="trash-head">
@@ -351,6 +362,7 @@
               <option value="concave">concave</option>
               <option value="none">none</option>
             </select>
+            <label class="deck-brand-toggle" title="Apply your branding (accent color + logo chip) when presenting this deck"><input type="checkbox" id="deckBrand"> Brand</label>
             <button id="deckTbToggle" class="deck-tb-toggle" title="Show/hide the full formatting toolbar">–</button>
           </div>
           <div id="deckToolbarSlot" class="deck-toolbar-slot"></div>

@@ -219,6 +219,60 @@ ipcMain.handle('backup:save', async () => {
   }
 });
 
+// ——— "Open with Marknote" for .md files ———
+// The file is imported (copied) into the notes library with a dedupe suffix
+// — unless it already lives there — then opened in the main window.
+const pendingOpens = [];
+let openReady = false;
+
+function importAndOpenNote(srcPath) {
+  try {
+    if (!/\.(md|markdown)$/i.test(srcPath) || !fs.existsSync(srcPath)) return;
+    const notesDir = path.join(DATA_ROOT, 'notes');
+    const base = path.basename(srcPath).replace(/\.markdown$/i, '.md');
+    let target = path.join(notesDir, base);
+    if (path.resolve(path.dirname(srcPath)) !== path.resolve(notesDir)) {
+      const content = fs.readFileSync(srcPath, 'utf8');
+      if (fs.existsSync(target) && fs.readFileSync(target, 'utf8') !== content) {
+        const stem = base.replace(/\.md$/i, '');
+        let n = 2;
+        while (fs.existsSync(path.join(notesDir, `${stem} ${n}.md`))) n++;
+        target = path.join(notesDir, `${stem} ${n}.md`);
+      }
+      if (!fs.existsSync(target)) fs.copyFileSync(srcPath, target);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.send('open:note', path.basename(target));
+    }
+  } catch (err) {
+    dbg('open-file failed: ' + err.message);
+  }
+}
+
+// macOS fires this for Finder opens — register before ready and queue
+app.on('open-file', (e, p) => {
+  e.preventDefault();
+  if (openReady) importAndOpenNote(p);
+  else pendingOpens.push(p);
+});
+
+// Windows: paths arrive via argv; a second launch focuses the first instance
+if (process.platform === 'win32') {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+  } else {
+    app.on('second-instance', (_e, argv) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+      argv.filter((a) => /\.(md|markdown)$/i.test(a)).forEach(importAndOpenNote);
+    });
+  }
+}
+
 let captureWin = null;
 ipcMain.on('capture:hide', () => {
   if (captureWin && !captureWin.isDestroyed()) captureWin.hide();
@@ -296,6 +350,16 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+
+  if (mainWindow) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      openReady = true;
+      pendingOpens.splice(0).forEach(importAndOpenNote);
+      if (process.platform === 'win32') {
+        process.argv.filter((a2) => /\.(md|markdown)$/i.test(a2)).forEach(importAndOpenNote);
+      }
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

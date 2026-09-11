@@ -33,6 +33,20 @@ $PB -c "Set :CFBundleName Marknote" "$PLIST"
 $PB -c "Set :CFBundleDisplayName Marknote" "$PLIST" 2>/dev/null || \
   $PB -c "Add :CFBundleDisplayName string Marknote" "$PLIST"
 $PB -c "Set :CFBundleIdentifier app.marknote.desktop" "$PLIST"
+
+# Declare .md/.markdown so Marknote shows up under Finder's "Open with"
+$PB -c "Delete :CFBundleDocumentTypes" "$PLIST" 2>/dev/null || true
+$PB -c "Add :CFBundleDocumentTypes array" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string Markdown" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Editor" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string Alternate" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string net.daringfireball.markdown" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions array" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 string md" "$PLIST"
+$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:1 string markdown" "$PLIST"
+
 $PB -c "Set :NSMicrophoneUsageDescription Marknote records meeting audio when you press the record button." "$PLIST" 2>/dev/null || \
   $PB -c "Add :NSMicrophoneUsageDescription string Marknote records meeting audio when you press the record button." "$PLIST"
 cp "$PROJECT/icon/notes.icns" "$APP/Contents/Resources/electron.icns"

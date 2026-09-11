@@ -37,6 +37,9 @@ Body markdown…
 - `created` / `modified` — quoted ISO-8601 strings. On API PUT, `modified` is updated
   server-side; when writing files directly, set it yourself.
 - `pinned: true` — optional; keeps the note at the top of the list.
+- `archived: true` — optional; hides the note from the list and label counts.
+  It stays searchable (🗃 badge), linkable and transcludable; the 🗃 footer
+  button lists archived notes, ⋯ → Archive/Unarchive toggles.
 
 ## Markdown that renders specially
 
@@ -122,6 +125,7 @@ Directives (HTML comments — invisible in normal note view):
 | `<!-- color: #ffffff -->` | slide | default text color for that slide |
 | `<!-- music: <youtube url> -->` | deck | background music; starts when the slide carrying the directive is reached (slide 1 = from the beginning); a `?t=`/`&t=` in the URL (seconds or `1h2m3s`) sets the start position in the video |
 | `<!-- notes ... -->` | slide | speaker notes (multiline OK) — invisible everywhere except the presenter view |
+| `<!-- brand -->` | deck | applies the saved branding (accent color + logo/company chip) to live presentations and the deck preview — toggled by the Brand checkbox in the deck editor; branded PDF export is a separate choice |
 
 `![[Note]]` embeds contribute their own `---` breaks as extra slides. The user presents
 via the Present button; the deck editor (Edit deck) is the interactive editing UI.
