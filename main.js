@@ -274,6 +274,9 @@ if (process.platform === 'win32') {
 }
 
 let captureWin = null;
+ipcMain.handle('sysaudio:openSettings', () => {
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+});
 ipcMain.on('capture:hide', () => {
   if (captureWin && !captureWin.isDestroyed()) captureWin.hide();
 });

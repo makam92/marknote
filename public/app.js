@@ -2407,9 +2407,17 @@ async function setSystemAudio(on) {
   } catch (err) {
     clog('FAILED: ' + err.name + ' — ' + err.message);
     box.checked = false;
-    const why = err.name === 'NotAllowedError'
-      ? 'permission missing — allow Marknote under System Settings → Privacy & Security → Screen & System Audio Recording, then restart the app'
+    // AbortError right away = macOS refused the capture: typically a stale
+    // Screen Recording grant (app updates invalidate it for unsigned apps).
+    // The visible toggle can look ON while the grant no longer matches —
+    // removing the entry (−) and re-adding the app is what actually fixes it.
+    const stale = err.name === 'NotAllowedError' || err.name === 'AbortError';
+    const why = stale
+      ? 'macOS blocked the capture. In the settings pane that just opened: select Marknote, remove it with −, add it again with ＋, then restart the app'
       : err.message;
+    if (stale && window.marknoteNative && window.marknoteNative.openScreenSettings) {
+      window.marknoteNative.openScreenSettings();
+    }
     alertBar('Computer audio not captured — ' + why + '. Recording the mic only.');
   }
 }
