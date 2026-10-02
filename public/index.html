@@ -348,22 +348,24 @@
             <span class="tb-group deck-extras">
               <button data-dk="steps" title="Toggle step-by-step bullets on this slide">☑ Steps</button>
               <button data-dk="sound" title="Play a sound when this slide appears">🔉 Sound</button>
+              <button data-dk="live" title="Show another app's window live on this slide — e.g. the iOS Simulator or Android Emulator">◉ Live</button>
               <button data-dk="embed" title="Embed another note's content">![[&hairsp;Note&hairsp;]]</button>
             </span>
-            <span class="mm-spacer"></span>
-            <button id="slideFgBtn" title="Default text color for this slide"><span id="slideFgSwatch" class="bg-swatch"></span>&hairsp;Text</button>
-            <button id="slideBgBtn" title="Background color for this slide"><span id="slideBgSwatch" class="bg-swatch"></span>&hairsp;Bg</button>
-            <select id="slideTransition" title="Transition for this slide only">
-              <option value="">this slide: inherit</option>
-              <option value="slide">slide</option>
-              <option value="fade">fade</option>
-              <option value="zoom">zoom</option>
-              <option value="convex">convex</option>
-              <option value="concave">concave</option>
-              <option value="none">none</option>
-            </select>
-            <label class="deck-brand-toggle" title="Apply your branding (accent color + logo chip) when presenting this deck"><input type="checkbox" id="deckBrand"> Brand</label>
-            <button id="deckTbToggle" class="deck-tb-toggle" title="Show/hide the full formatting toolbar">–</button>
+            <span class="deck-slide-props">
+              <button id="slideFgBtn" title="Default text color for this slide"><span id="slideFgSwatch" class="bg-swatch"></span>&hairsp;Text</button>
+              <button id="slideBgBtn" title="Background color for this slide"><span id="slideBgSwatch" class="bg-swatch"></span>&hairsp;Bg</button>
+              <select id="slideTransition" title="Transition for this slide only">
+                <option value="">this slide: inherit</option>
+                <option value="slide">slide</option>
+                <option value="fade">fade</option>
+                <option value="zoom">zoom</option>
+                <option value="convex">convex</option>
+                <option value="concave">concave</option>
+                <option value="none">none</option>
+              </select>
+              <label class="deck-brand-toggle" title="Apply your branding (accent color + logo chip) when presenting this deck"><input type="checkbox" id="deckBrand"> Brand</label>
+              <button id="deckTbToggle" class="deck-tb-toggle" title="Show/hide the full formatting toolbar">–</button>
+            </span>
           </div>
           <div id="deckToolbarSlot" class="deck-toolbar-slot"></div>
         </div>

@@ -1398,6 +1398,71 @@ flowchart LR
 
 # Nästa steg
 `);
+    await seed('appdemo.md', `---
+tags: [Presentation]
+title: 'App-demo'
+---
+
+<!-- transition: slide -->
+
+# {{title}}
+
+Demo · {{date}}
+
+<!-- notes
+Starta simulatorn (eller emulatorn) innan du börjar. Livebilden hittar
+fönstret själv och dyker upp så fort det finns.
+-->
+
+---
+
+## Det här ska vi visa
+
+<!-- steps -->
+
+- Problemet appen löser
+- Flödet vi demar
+- Vad som är nytt
+
+---
+
+## Demo
+
+::: row
+- Steg 1
+- Steg 2
+- Resultatet
+
+<!-- live: Simulator -->
+:::
+
+<!-- notes
+Klicka i simulatorn på din egen skärm, publiken ser den live på sliden.
+Byt "Simulator" mot enhetens namn (t.ex. "iPhone 17 Pro") för en viss enhet,
+eller "Android Emulator". Storlek: lägg till =320 efter namnet.
+-->
+
+---
+
+## iOS och Android sida vid sida
+
+::: row
+<!-- live: Simulator -->
+
+<!-- live: Android Emulator -->
+:::
+
+<!-- notes
+Emulatorn behöver ett eget fönster: fristående (Settings → Tools → Emulator →
+bocka ur "Launch in the Running Devices tool window") eller Android Studios
+Running Devices som eget fönster (View Mode → Float eller Window). Ta bort
+sliden om du bara visar en plattform.
+-->
+
+---
+
+# Frågor?
+`);
     await seed('motesanteckning.md', `---
 tags: [Meeting]
 title: 'Mötesanteckning'

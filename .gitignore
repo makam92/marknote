@@ -6,3 +6,12 @@ models/
 .DS_Store
 icon/*.iconset/
 .backups/
+# personal data the app writes next to the code when run from a checkout
+.history/
+templates/
+brand.json
+brand-logo.*
+bin/
+.client-debug.log
+.presenter-debug.log
+.todo-reminders.json

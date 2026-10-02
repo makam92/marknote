@@ -274,6 +274,41 @@ model-viewer.model-embed {
 }
 .reveal section model-viewer.model-embed { height: 50vh; max-width: 100%; }
 
+/* <!-- live: Simulator --> — another app's window mirrored onto a slide.
+   Inline-level like an image, so slide/::: alignment moves it the same way. */
+.live-embed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  max-width: 100%;
+  min-width: 240px;
+  min-height: 140px;
+  padding: 16px 24px;
+  border: 1px dashed var(--ink-faint);
+  border-radius: 12px;
+  background: var(--code-bg);
+  color: var(--ink-soft);
+  font-size: 18px;
+  line-height: 1.4;
+  text-align: center;
+}
+.live-embed.is-live { padding: 0; border: 0; background: none; min-width: 0; min-height: 0; }
+.live-embed.is-live .live-msg { display: none; }
+.live-video { display: block; max-width: 100%; max-height: 62vh; border-radius: 12px; }
+.live-embed.live-pending .live-video { visibility: hidden; }
+.live-btn {
+  margin-top: 10px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .audio-embed {
   display: flex;
   align-items: center;
@@ -890,10 +925,21 @@ button.danger.confirming { background: #c0392b; border-color: #c0392b; color: #f
   border-bottom: 1px solid var(--line);
   background: var(--paper-deep);
 }
+/* the edit column is only 38% wide — when the insert buttons and the slide
+   controls don't fit side by side, the controls drop to a row of their own
+   instead of running into the preview */
 .deck-toolbar-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
+}
+.deck-slide-props {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-left: auto;
 }
 #slideTransition {
   font: inherit;
@@ -916,7 +962,6 @@ button.danger.confirming { background: #c0392b; border-color: #c0392b; color: #f
 .bg-swatch.bg-none {
   background: linear-gradient(135deg, transparent 45%, #c0392b 45%, #c0392b 55%, transparent 55%) !important;
 }
-.deck-toolbar-top .mm-spacer { flex: 1; }
 .deck-toolbar button {
   border: none;
   border-radius: 6px;

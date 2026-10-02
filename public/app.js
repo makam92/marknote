@@ -1636,6 +1636,286 @@ function startPresentationMusic() {
   $('musicToggle').classList.remove('muted');
 }
 
+/* ——— live windows on slides: <!-- live: Simulator --> ——— */
+// Mirrors another app's window onto a slide — typically the iOS Simulator or
+// Android Emulator: demo in the real window on the laptop while the audience
+// sees it live on the projector. The name matches a window title or app name
+// (desktop app only). Static views (deck editor, presenter view, PDF) show a
+// placeholder; a running deck streams the slides within one step of the
+// current one, so the picture is already live when a slide lands.
+
+const LIVE_RE = /^\s*live:\s*(.+?)(?:\s+=(\d+)(?:x(\d+))?)?\s*$/;
+const liveCaps = new Map(); // window name → { stream, timer, stopped }
+
+function markLiveEmbeds(el) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_COMMENT);
+  const found = [];
+  while (walker.nextNode()) {
+    const m = walker.currentNode.nodeValue.match(LIVE_RE);
+    if (m) found.push([walker.currentNode, m]);
+  }
+  for (const [node, [, name, w, h]] of found) {
+    const box = document.createElement('div');
+    box.className = 'live-embed';
+    box.dataset.live = name;
+    if (w) { box.dataset.w = w; box.style.width = w + 'px'; }
+    if (h) { box.dataset.h = h; box.style.height = h + 'px'; }
+    box.innerHTML = '<span class="live-msg"></span>';
+    node.replaceWith(box);
+    liveMsg(box, '');
+  }
+}
+
+// Placeholder text (plus an optional action button) — drops the live picture.
+function liveMsg(box, status, action) {
+  box.classList.remove('is-live');
+  box.querySelector('video')?.remove();
+  const msg = box.querySelector('.live-msg');
+  msg.textContent = '◉ Live: ' + box.dataset.live + (status ? ' — ' + status : '');
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'live-btn';
+    btn.textContent = action.label;
+    btn.addEventListener('click', action.run);
+    msg.append(document.createElement('br'), btn);
+  }
+}
+
+function liveBoxes(name) {
+  return [...document.querySelectorAll('#presentSlides .live-embed')].filter((b) => b.dataset.live === name);
+}
+
+// Stream exactly the windows on the current slide and its neighbours.
+function syncLiveEmbeds() {
+  const want = new Set();
+  if (deck) {
+    const h = deck.getIndices().h;
+    [...$('presentSlides').children].forEach((sec, i) => {
+      if (Math.abs(i - h) > 1) return;
+      sec.querySelectorAll('.live-embed').forEach((b) => want.add(b.dataset.live));
+    });
+  }
+  for (const name of [...liveCaps.keys()]) if (!want.has(name)) stopLive(name);
+  for (const name of want) if (!liveCaps.has(name)) startLive(name);
+}
+
+function stopLive(name) {
+  const cap = liveCaps.get(name);
+  if (!cap) return;
+  cap.stopped = true;
+  clearTimeout(cap.timer);
+  clearTimeout(cap.cropTimer);
+  if (cap.stream) cap.stream.getTracks().forEach((t) => t.stop());
+  liveCaps.delete(name);
+  liveBoxes(name).forEach((b) => liveMsg(b, ''));
+}
+
+function startLive(name) {
+  const cap = { stream: null, timer: null, cropTimer: null, crop: undefined, stopped: false };
+  liveCaps.set(name, cap);
+  // not there (yet) — e.g. the simulator is still booting: keep looking
+  const retry = (status) => {
+    liveBoxes(name).forEach((b) => liveMsg(b, status));
+    cap.timer = setTimeout(attempt, 2000);
+  };
+  const attempt = async () => {
+    const res = await openLiveStream(name);
+    if (cap.stopped) {
+      if (res.stream) res.stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    if (res.error === 'permission') {
+      liveBoxes(name).forEach((b) => liveMsg(b, 'needs Screen Recording permission', {
+        label: 'Open settings',
+        run: () => window.marknoteNative.openScreenSettings()
+      }));
+    } else if (res.error === 'browser') {
+      liveBoxes(name).forEach((b) => liveMsg(b, 'needs the desktop app'));
+    } else if (!res.stream) {
+      retry(res.error === 'notfound' ? 'waiting for the window…' : 'capture failed, retrying…');
+    } else {
+      cap.stream = res.stream;
+      cap.crop = undefined;
+      showLive(name, res.stream, res.device);
+      if (res.device) trackDevice(name, cap);
+      // the window closed or its app quit — wait for it to come back
+      res.stream.getVideoTracks()[0].addEventListener('ended', () => {
+        if (cap.stopped || cap.stream !== res.stream) return;
+        cap.stream = null;
+        clearTimeout(cap.cropTimer);
+        retry('waiting for the window…');
+      });
+    }
+  };
+  attempt();
+}
+
+async function openLiveStream(name) {
+  const native = window.marknoteNative;
+  if (!native || !native.liveFind) return { error: 'browser' };
+  try {
+    const src = await native.liveFind(name);
+    if (src.error) return src;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: src.id,
+          maxWidth: 3840,
+          maxHeight: 3840,
+          maxFrameRate: 60
+        }
+      }
+    });
+    return { stream, device: !!src.device };
+  } catch (e) {
+    return { error: 'failed' };
+  }
+}
+
+// Simulator/emulator windows show just the phone: cropped once the first
+// frame is in, then re-checked — rotating the device or resizing its window
+// moves it around.
+function trackDevice(name, cap) {
+  const stream = cap.stream;
+  const run = async () => {
+    if (cap.stopped || cap.stream !== stream) return;
+    const video = liveBoxes(name).map((b) => b.querySelector('video')).find((v) => v && v.readyState >= 2);
+    const crop = video ? await findDevice(video) : undefined;
+    if (cap.stopped || cap.stream !== stream) return;
+    if (crop !== undefined) applyCrop(name, cap, crop);
+    cap.cropTimer = setTimeout(run, crop === undefined ? 200 : 1500);
+  };
+  run();
+}
+
+// The phone is the biggest blob that differs from the window's background
+// (the commonest colour along the frame's edge); title bars and toolbars are
+// wide-but-low blobs and don't count. Returns fractions of the frame plus the
+// corner radius — null when nothing phone-like is there (show it all), or
+// undefined when no frame could be read yet.
+async function findDevice(video) {
+  const W = 240;
+  const H = Math.max(1, Math.round(video.videoHeight * W / video.videoWidth));
+  let px;
+  try {
+    const bmp = await createImageBitmap(video, { resizeWidth: W, resizeHeight: H, resizeQuality: 'medium' });
+    const canvas = findDevice.canvas || (findDevice.canvas = document.createElement('canvas'));
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+    px = ctx.getImageData(0, 0, W, H).data;
+  } catch (e) {
+    return undefined;
+  }
+  const bins = new Map();
+  const tally = (x, y) => {
+    const i = (y * W + x) * 4;
+    const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+    const b = bins.get(k) || [0, 0, 0, 0];
+    b[0]++; b[1] += px[i]; b[2] += px[i + 1]; b[3] += px[i + 2];
+    bins.set(k, b);
+  };
+  for (let x = 0; x < W; x++) { tally(x, 0); tally(x, H - 1); }
+  for (let y = 1; y < H - 1; y++) { tally(0, y); tally(W - 1, y); }
+  let bg = null;
+  for (const b of bins.values()) if (!bg || b[0] > bg[0]) bg = b;
+  const [r0, g0, b0] = [bg[1] / bg[0], bg[2] / bg[0], bg[3] / bg[0]];
+  const fg = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const j = i * 4;
+    fg[i] = Math.max(Math.abs(px[j] - r0), Math.abs(px[j + 1] - g0), Math.abs(px[j + 2] - b0)) > 16 ? 1 : 0;
+  }
+  const seen = new Uint8Array(W * H);
+  const stack = [];
+  let top = null;
+  for (let s = 0; s < W * H; s++) {
+    if (!fg[s] || seen[s]) continue;
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    seen[s] = 1;
+    stack.push(s);
+    while (stack.length) {
+      const i = stack.pop();
+      const x = i % W, y = (i - x) / W;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      for (const n of [x > 0 && i - 1, x < W - 1 && i + 1, y > 0 && i - W, y < H - 1 && i + W]) {
+        if (n !== false && fg[n] && !seen[n]) { seen[n] = 1; stack.push(n); }
+      }
+    }
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (h < H * 0.2 || w < W * 0.08) continue;
+    if (!top || w * h > top.w * top.h) top = { x0, y0, x1, y1, w, h };
+  }
+  if (!top) return null;
+  // corner radius: how far in the blob starts two rows from its top/bottom
+  // edge, then solved for the circle (m = r − √(4r − 4) at that depth)
+  const inset = (y, from, step) => {
+    for (let n = 0; n < top.w; n++) if (fg[y * W + from + n * step]) return n;
+    return 0;
+  };
+  const ms = [inset(top.y0 + 2, top.x0, 1), inset(top.y0 + 2, top.x1, -1),
+    inset(top.y1 - 2, top.x0, 1), inset(top.y1 - 2, top.x1, -1)].sort((a, b) => a - b);
+  const m = (ms[1] + ms[2]) / 2;
+  let r = m;
+  while (r < top.w / 2 && r - 2 * Math.sqrt(Math.max(r - 1, 0)) < m) r += 0.25;
+  return {
+    x: top.x0 / W, y: top.y0 / H, w: top.w / W, h: top.h / H,
+    rx: r / top.w, ry: r / top.h
+  };
+}
+
+// object-view-box makes the cropped region the video's own size, so the
+// slide layout, =W sizes and alignment all work on the phone alone.
+function applyCrop(name, cap, crop) {
+  const near = (a, b) => a && b && ['x', 'y', 'w', 'h'].every((k) => Math.abs(a[k] - b[k]) < 0.004);
+  if (cap.crop !== undefined && (crop === cap.crop || near(crop, cap.crop))) return;
+  cap.crop = crop;
+  const pct = (n) => (n * 100).toFixed(2) + '%';
+  for (const box of liveBoxes(name)) {
+    box.classList.remove('live-pending');
+    const video = box.querySelector('video');
+    if (!video) continue;
+    video.style.objectViewBox = crop
+      ? `inset(${pct(crop.y)} ${pct(1 - crop.x - crop.w)} ${pct(1 - crop.y - crop.h)} ${pct(crop.x)})`
+      : '';
+    video.style.borderRadius = crop ? `${pct(crop.rx)} / ${pct(crop.ry)}` : '';
+  }
+  if (deck) deck.layout();
+}
+
+function showLive(name, stream, device) {
+  for (const box of liveBoxes(name)) {
+    // a device window stays hidden until it's cropped to the phone
+    box.classList.toggle('live-pending', !!device);
+    let video = box.querySelector('video');
+    if (!video) {
+      video = document.createElement('video');
+      video.className = 'live-video';
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      // reveal pauses slide media on leave — a mirror must keep running
+      video.setAttribute('data-ignore', '');
+      if (box.dataset.w) video.style.width = box.dataset.w + 'px';
+      if (box.dataset.h) video.style.height = box.dataset.h + 'px';
+      // the slide's height changes once the picture's size is known — re-center
+      const relayout = () => { if (deck) deck.layout(); };
+      video.addEventListener('loadedmetadata', relayout);
+      video.addEventListener('resize', relayout);
+      box.appendChild(video);
+    }
+    video.srcObject = stream;
+    video.play().catch(() => {});
+    box.classList.add('is-live');
+  }
+}
+
 async function openPresentation() {
   const note = state.current;
   if (!note || deck) return;
@@ -1660,6 +1940,7 @@ async function openPresentation() {
     slidesEl.appendChild(sec);
     renderMarkdown(sec, chunk, { staticMermaid: true });
     sec.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+    markLiveEmbeds(sec);
     await renderMermaidStatic(sec);
     if (/<!--\s*steps\s*-->/.test(chunk)) {
       sec.querySelectorAll(':scope > ul > li, :scope > ol > li').forEach((li) => li.classList.add('fragment'));
@@ -1697,7 +1978,7 @@ async function openPresentation() {
       32: () => {
         // Space toggles the current slide's media; advances otherwise.
         const slide = deck.getCurrentSlide();
-        const media = slide.querySelector('video, audio') ||
+        const media = slide.querySelector('video:not(.live-video), audio') ||
           (slide.dataset.sound && deckAudio ? deckAudio : null);
         if (media) {
           if (media.paused) media.play().catch(() => {});
@@ -1711,11 +1992,13 @@ async function openPresentation() {
   await deck.initialize();
   deck.on('slidechanged', (e) => {
     playSlideSound(e.currentSlide);
+    syncLiveEmbeds();
     if (presMusic && !presMusic.started && deck.getIndices().h >= presMusic.startAt) {
       startPresentationMusic();
     }
   });
   playSlideSound(deck.getCurrentSlide());
+  syncLiveEmbeds();
   if (presMusic && presMusic.startAt === 0) startPresentationMusic();
   await applyLiveBrand($('presentView'), body);
 }
@@ -1725,6 +2008,7 @@ function closePresentation() {
   try { deck.destroy(); } catch (e) { /* reveal already gone */ }
   deck = null;
   playSlideSound(null);
+  syncLiveEmbeds(); // no deck — stops every live window
   presMusic = null;
   $('presentMusic').innerHTML = '';
   $('musicToggle').hidden = true;
@@ -1766,14 +2050,18 @@ function isDeckNote(note) {
   return (
     note.tags.includes('Presentation') ||
     splitSlides(note.body).length > 1 ||
-    /<!--\s*(transition|music|steps|sound)\b/.test(note.body)
+    /<!--\s*(transition|music|steps|sound|live)\b/.test(note.body)
   );
 }
 
 function slideThumbHtml(chunk) {
   const cleaned = chunk
     .replace(/```mermaid[\s\S]*?(```|$)/g, '\n<div class="thumb-diagram">◇ diagram</div>\n')
-    .replace(/```[\s\S]*?(```|$)/g, '\n<div class="thumb-diagram">‹/› code</div>\n');
+    .replace(/```[\s\S]*?(```|$)/g, '\n<div class="thumb-diagram">‹/› code</div>\n')
+    .replace(/<!--(\s*live:[^\n]*?)-->/g, (m, inner) => {
+      const live = inner.match(LIVE_RE);
+      return live ? `\n<div class="thumb-diagram">◉ ${escapeHtml(live[1])}</div>\n` : m;
+    });
   try {
     return marked.parse(preprocess(cleaned), { gfm: true, breaks: true });
   } catch (e) {
@@ -1836,6 +2124,7 @@ async function renderDeckPreview() {
   }
   renderMarkdown(box, chunk, { staticMermaid: true });
   box.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+  markLiveEmbeds(box);
   const bg = (chunk.match(/<!--\s*background:\s*(\S+)\s*-->/) || [])[1];
   box.style.backgroundColor = bg || '';
   const fg = (chunk.match(/<!--\s*color:\s*(\S+)\s*-->/) || [])[1];
@@ -2101,6 +2390,15 @@ const deckToolbar = {
     dcReplace(0, 0, tpl);
     const s = tpl.indexOf('@attachment/');
     dcEl().setSelectionRange(s, s + '@attachment/file.mp3'.length);
+  },
+  // positional, unlike sound: the window shows where the directive sits
+  live: () => {
+    const box = dcEl();
+    const s = box.selectionStart;
+    const tpl = '\n<!-- live: Simulator -->\n';
+    dcReplace(s, box.selectionEnd, tpl);
+    const n = s + tpl.indexOf('Simulator');
+    box.setSelectionRange(n, n + 'Simulator'.length);
   },
   embed: () => {
     const box = dcEl();
@@ -3879,10 +4177,12 @@ async function renderPresenterSlides() {
   if ($('presSlidePick').value !== String(presenterH)) $('presSlidePick').value = String(presenterH);
   renderMarkdown($('presCurrent'), cur, { staticMermaid: true });
   $('presCurrent').querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+  markLiveEmbeds($('presCurrent'));
   await renderMermaidStatic($('presCurrent'));
   if (next != null) {
     renderMarkdown($('presNext'), next, { staticMermaid: true });
     $('presNext').querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+    markLiveEmbeds($('presNext'));
     await renderMermaidStatic($('presNext'));
   } else {
     $('presNext').innerHTML = '<div class="pres-end">— end of deck —</div>';
@@ -4093,6 +4393,7 @@ async function bootPrintMode(deckMode, branded) {
       root.appendChild(slide);
       renderMarkdown(inner, chunk, { staticMermaid: true });
       inner.querySelectorAll('.transcribe-btn, .diagram-edit').forEach((b) => b.remove());
+      markLiveEmbeds(inner);
       await renderMermaidStatic(inner);
       if (brandCfg && (brandCfg.logo || brandCfg.company)) {
         const chip = document.createElement('div');

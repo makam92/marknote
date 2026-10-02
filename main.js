@@ -1,4 +1,5 @@
-const { app, BrowserWindow, shell, screen, ipcMain, dialog, session, desktopCapturer, globalShortcut } = require('electron');
+const { app, BrowserWindow, shell, screen, ipcMain, dialog, session, desktopCapturer, globalShortcut, systemPreferences } = require('electron');
+const { execFile } = require('child_process');
 
 // System-audio loopback for the meeting recorder: Chromium supports it on
 // macOS 13+ via ScreenCaptureKit / Core Audio taps, but only behind these
@@ -101,7 +102,8 @@ function openDisplayWindow(displayId, file) {
     fullscreen: external,
     frame: !external,
     backgroundColor: '#000000',
-    webPreferences: { contextIsolation: true, nodeIntegration: false }
+    // preload: live-window slides look up their window from here too
+    webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.js') }
   });
   displayWindow.loadURL(`http://localhost:${PORT}/#display/${encodeURIComponent(file)}`);
   displayWindow.on('closed', () => {
@@ -128,6 +130,69 @@ ipcMain.handle('present:open', (_e, id, file) => openDisplayWindow(id, file));
 ipcMain.handle('present:close', () => {
   if (displayWindow && !displayWindow.isDestroyed()) displayWindow.destroy();
   displayWindow = null;
+});
+
+// ——— live windows on slides: <!-- live: Simulator --> ———
+// The renderer streams the window via getUserMedia's desktop source; this
+// finds it. desktopCapturer only knows window titles — and the iOS Simulator
+// titles its window after the device ("iPhone 17 Pro") — so owner app names
+// come from CGWindowList via JXA (no screen-recording access needed for them).
+const WINDOW_OWNERS_JXA = `ObjC.import('CoreGraphics');
+const list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(16, 0))) || [];
+JSON.stringify(list.filter((w) => w.kCGWindowLayer === 0).map((w) =>
+  [w.kCGWindowNumber, w.kCGWindowOwnerName || '', w.kCGWindowBounds.Width * w.kCGWindowBounds.Height]));`;
+
+function windowOwners() {
+  if (process.platform !== 'darwin') return Promise.resolve(new Map());
+  return new Promise((resolve) => {
+    execFile('osascript', ['-l', 'JavaScript', '-e', WINDOW_OWNERS_JXA], { timeout: 5000 }, (err, out) => {
+      const owners = new Map();
+      try {
+        for (const [id, owner, area] of JSON.parse(out)) owners.set(id, { owner, area });
+      } catch (e) {
+        dbg('live: window owners failed: ' + (err ? err.message : e.message));
+      }
+      resolve(owners);
+    });
+  });
+}
+
+// AVD names come with underscores (Pixel_9_Pro) or spaces (Pixel 9 Pro)
+const liveNorm = (s) => String(s || '').toLowerCase().replace(/_/g, ' ').trim();
+
+// Best match for the query: exact title or app name, then a title containing
+// it, then an app name containing it; ties go to the biggest window.
+ipcMain.handle('live:find', async (_e, query) => {
+  if (process.platform === 'darwin' && ['denied', 'restricted'].includes(systemPreferences.getMediaAccessStatus('screen'))) {
+    return { error: 'permission' };
+  }
+  const q = liveNorm(query);
+  if (!q) return { error: 'notfound' };
+  const [sources, owners] = await Promise.all([
+    desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } }),
+    windowOwners()
+  ]);
+  // never mirror Marknote's own windows (a slide showing itself)
+  const own = new Set(BrowserWindow.getAllWindows().map((w) => w.getMediaSourceId()));
+  let best = null;
+  for (const s of sources) {
+    if (own.has(s.id)) continue;
+    const w = owners.get(Number((s.id.match(/^window:(\d+):/) || [])[1])) || { owner: '', area: 0 };
+    // docked in Android Studio, the emulator's screen is the (floatable)
+    // "Running Devices" tool window — it answers to "Android Emulator" too,
+    // as a title match, so a standalone emulator window still wins
+    const studioMirror = w.owner === 'Android Studio' && /^Running Devices/.test(s.name);
+    const title = liveNorm(studioMirror ? 'Android Emulator · ' + s.name : s.name);
+    // the Android Emulator's own windows belong to a process named qemu-system-…
+    const owner = liveNorm(/^qemu-system/.test(w.owner) ? 'Android Emulator' : w.owner);
+    const score = title === q || owner === q ? 3 : title.includes(q) ? 2 : owner.includes(q) ? 1 : 0;
+    if (score && (!best || score > best.score || (score === best.score && w.area > best.area))) {
+      // device windows get cropped to just the phone by the renderer
+      const device = w.owner === 'Simulator' || /^qemu-system/.test(w.owner) || studioMirror;
+      best = { score, area: w.area, id: s.id, name: s.name, device };
+    }
+  }
+  return best ? { id: best.id, name: best.name, device: best.device } : { error: 'notfound' };
 });
 
 // ——— PDF export ———

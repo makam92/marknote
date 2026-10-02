@@ -126,6 +126,26 @@ Directives (HTML comments — invisible in normal note view):
 | `<!-- music: <youtube url> -->` | deck | background music; starts when the slide carrying the directive is reached (slide 1 = from the beginning); a `?t=`/`&t=` in the URL (seconds or `1h2m3s`) sets the start position in the video |
 | `<!-- notes ... -->` | slide | speaker notes (multiline OK) — invisible everywhere except the presenter view |
 | `<!-- brand -->` | deck | applies the saved branding (accent color + logo/company chip) to live presentations and the deck preview — toggled by the Brand checkbox in the deck editor; branded PDF export is a separate choice |
+| `<!-- live: Simulator -->` | position | shows another app's window live, right where the directive sits (works inside `::: row` etc.) — see below |
+
+**Live windows** (`<!-- live: Name -->`, desktop app only): mirrors a window onto
+the slide — made for demoing in the iOS Simulator / Android Emulator while the
+audience watches on the projector. `Name` matches a window title or app name,
+case-insensitive (exact match first, then substring; ties → biggest window):
+`Simulator` takes any simulator window, `iPhone 17 Pro` a specific device,
+`Android Emulator` the emulator's own window or, failing that, Android
+Studio's "Running Devices" tool window floated into a window of its own
+(View Mode → Float/Window; it includes Studio's toolbar — a standalone
+emulator gives a cleaner picture: Settings → Tools → Emulator → uncheck
+"Launch in the Running Devices tool window", then restart the emulator).
+Simulator and emulator windows (Running Devices included) are cropped to
+just the phone — title bar, toolbars and background go; the crop follows
+rotation and window resizes. Optional size like images:
+`<!-- live: Simulator =320 -->` (or `=320x690`).
+The picture is a mirror, not interactive — demo in the real window. Streams run
+only for the current slide and its neighbours; a missing window shows "waiting
+for the window…" and is picked up as soon as it appears. Needs Screen Recording
+permission; the deck editor, presenter view and PDF show a placeholder.
 
 `![[Note]]` embeds contribute their own `---` breaks as extra slides. The user presents
 via the Present button; the deck editor (Edit deck) is the interactive editing UI.
@@ -137,8 +157,9 @@ current/next slide, speaker notes, timer and controls, synced via BroadcastChann
 
 `templates/*.md` — front-matter `title` is the display name shown under
 "+ Create → From template…"; `tags` copy to the new note. `{{title}}` and
-`{{date}}` in the body are filled in at creation. Three starters are seeded on
-first run (research, pitchdeck, meeting). API: GET `/api/templates` (list),
+`{{date}}` in the body are filled in at creation. Starters are seeded on the
+very first run only (research, pitchdeck, app demo with live-simulator slides,
+meeting, daily). API: GET `/api/templates` (list),
 GET `/api/templates/<file>` (raw). Backup zips include `templates/`.
 
 ## Locked notes

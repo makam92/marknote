@@ -15,5 +15,6 @@ contextBridge.exposeInMainWorld('marknoteNative', {
   captureHide: () => ipcRenderer.send('capture:hide'),
   onCaptureReset: (cb) => ipcRenderer.on('capture:reset', () => cb()),
   onOpenNote: (cb) => ipcRenderer.on('open:note', (_e, file) => cb(file)),
-  openScreenSettings: () => ipcRenderer.invoke('sysaudio:openSettings')
+  openScreenSettings: () => ipcRenderer.invoke('sysaudio:openSettings'),
+  liveFind: (query) => ipcRenderer.invoke('live:find', query)
 });
